@@ -169,17 +169,19 @@ if uploaded_file is not None:
 
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Audio Voice Synthesis Path using Gemini 3.8 Flash TTS
+            # 4. Clean Audio Voice Synthesis Path
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
                 
-                audio_prompt = f"Read the following text out loud in {target_lang} with highly realistic emotion, gossipy tone, and natural pacing. Do not read any punctuation literally: {creative_script}"
-                
+                # Instruction is moved to system_instruction so it is NOT spoken aloud
+                tts_system_instruction = f"You are a professional voice actor. Speak ONLY the user provided text in {target_lang} with realistic emotion, gossipy tone, and natural pacing. Do not read out instructions or metadata."
+
                 try:
                     audio_response = client.models.generate_content(
                         model="gemini-3.8-flash-tts",
-                        contents=[audio_prompt],
+                        contents=[creative_script],  # Strictly pass script text only
                         config=types.GenerateContentConfig(
+                            system_instruction=tts_system_instruction,
                             response_modalities=["AUDIO"],
                             speech_config=types.SpeechConfig(
                                 voice_config=types.VoiceConfig(
