@@ -59,6 +59,12 @@ def get_file_duration(file_path: str) -> float:
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return float(res.stdout.strip())
 
+def get_file_state_str(file_obj):
+    state = getattr(file_obj, "state", None)
+    if hasattr(state, "name"):
+        return state.name
+    return str(state)
+
 async def synthesize_voice(text: str, voice: str, output_path: str):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_path)
@@ -90,9 +96,11 @@ if uploaded_file is not None:
 
         with st.status("Analyzing Video & Building Audio Overlay...", expanded=True) as status:
 
+            # 1. Video Duration
             video_duration = get_file_duration(temp_video)
             st.write(f"⏱️ Video Duration: **{video_duration:.2f} seconds**")
 
+            # 2. Direct Video Upload to Gemini File API
             st.write("📹 Uploading raw video to Gemini for direct visual understanding...")
             try:
                 video_file = client.files.upload(file=temp_video)
@@ -100,20 +108,22 @@ if uploaded_file is not None:
                 st.error(f"Authentication or Upload Error: {e}")
                 st.stop()
 
-            while video_file.state.name == "PROCESSING":
+            # Wait for video processing on Google's server safely
+            while get_file_state_str(video_file) == "PROCESSING":
                 time.sleep(2)
                 video_file = client.files.get(name=video_file.name)
 
-            if video_file.state.name == "FAILED":
+            if get_file_state_str(video_file) == "FAILED":
                 st.error("Gemini failed to process the video input.")
                 st.stop()
 
+            # 3. Multimodal Analysis & Creative Script Generation
             st.write(f"🤖 Gemini is generating a **{script_style}** script in **{selected_voice_info['lang']}**...")
             
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
 
-            # Explanation Mode Injection
+            # Explanation Mode Anatomy Injection
             if script_style == "Viral Explanation Mode (Hook-Scoop-Twist)":
                 style_guide = """
                 CRITICAL STYLE: You MUST use the exact 3-part 'Hook-Scoop-Twist' anatomy.
@@ -138,44 +148,57 @@ if uploaded_file is not None:
             4. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no translation notes, no scene instructions, no labels.
             """
 
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=[video_file, prompt]
-            )
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[video_file, prompt]
+                )
+            except Exception as err:
+                st.error(f"Error generating script: {err}")
+                st.stop()
 
+            # Clean up uploaded video from Gemini server
             try:
                 client.files.delete(name=video_file.name)
             except Exception:
                 pass
 
-            creative_script = response.text.strip()
+            creative_script = response.text.strip() if response.text else ""
+            if not creative_script:
+                st.error("Generated script was empty. Please try again.")
+                st.stop()
+
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # Dual Audio Generation Path
+            # 4. Dual Audio Generation Path (Gemini Audio vs Edge-TTS)
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
                 
                 audio_prompt = f"Read the following text out loud in {target_lang} with highly realistic emotion, gossipy tone, and natural pacing. Do not read any punctuation literally: {creative_script}"
                 
-                audio_response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=[audio_prompt],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=types.SpeechConfig(
-                            voice_config=types.VoiceConfig(
-                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=selected_voice_info["code"]
+                try:
+                    audio_response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[audio_prompt],
+                        config=types.GenerateContentConfig(
+                            response_modalities=["AUDIO"],
+                            speech_config=types.SpeechConfig(
+                                voice_config=types.VoiceConfig(
+                                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                        voice_name=selected_voice_info["code"]
+                                    )
                                 )
                             )
                         )
                     )
-                )
+                except Exception as err:
+                    st.error(f"Gemini Audio Generation Error: {err}")
+                    st.stop()
                 
                 audio_bytes = None
                 if audio_response.candidates and audio_response.candidates[0].content.parts:
                     for part in audio_response.candidates[0].content.parts:
-                        if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                        if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
                             audio_bytes = part.inline_data.data
                             break
                 
@@ -183,12 +206,13 @@ if uploaded_file is not None:
                     with open(script_audio, "wb") as f:
                         f.write(audio_bytes)
                 else:
-                    st.error("Gemini failed to return audio data. Check your API usage or prompt.")
+                    st.error("Gemini failed to return audio data. Check your API key or model availability.")
                     st.stop()
             else:
                 st.write(f"🎙️ Converting script to synthetic voiceover using Edge-TTS ({selected_voice_info['code']})...")
                 asyncio.run(synthesize_voice(creative_script, selected_voice_info["code"], script_audio))
 
+            # 5. Fit Audio Duration using FFmpeg ATempo
             audio_duration = get_file_duration(script_audio)
             tempo = max(0.8, min(audio_duration / video_duration, 1.6))
 
@@ -199,6 +223,7 @@ if uploaded_file is not None:
                 fitted_audio
             ], capture_output=True, check=True)
 
+            # 6. Mux Final Video with Audio via FFmpeg
             st.write("🎬 Muxing script audio into video via FFmpeg...")
             subprocess.run([
                 "ffmpeg", "-y",
