@@ -15,7 +15,7 @@ st.title("🎬 Direct Multimodal Video Hook Overlay")
 st.sidebar.header("Settings")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get a key from Google AI Studio")
 
-# Integrated Voice Roster: Expanded Gemini Native & Edge-TTS Voices
+# Integrated Voice Roster
 VOICE_OPTIONS = {
     "Gemini - Kore (Hindi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Hindi", "script_type": "Devanagari script"},
     "Gemini - Kore (Marathi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Marathi", "script_type": "Devanagari script"},
@@ -35,21 +35,20 @@ VOICE_OPTIONS = {
 selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
 selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
-# Speed Multiplier Control (Default 1.25x for fast, high-dopamine pacing)
 voice_speed = st.sidebar.slider(
-    "⚡ Voice Playback Speed Multiplier", 
-    min_value=1.0, 
+    "⚡ Voice Delivery Speed Multiplier", 
+    min_value=1.1, 
     max_value=1.8, 
-    value=1.25, 
-    step=0.05,
-    help="Increase to make the voiceover fast-paced for short-form video reels."
+    value=1.22, 
+    step=0.01,
+    help="1.20x-1.25x is the sweet spot for reel commentary."
 )
 
 script_style = st.sidebar.selectbox(
     "Hook / Script Style",
     [
-        "Viral Explanation Mode (Hook-Scoop-Twist)",
         "High-Dopamine Viral Opening", 
+        "Viral Explanation Mode (Hook-Scoop-Twist)", 
         "Cinematic Storytelling", 
         "Humorous & Punchy", 
         "Explainer Hook"
@@ -78,6 +77,26 @@ def get_file_state_str(file_obj):
     if hasattr(state, "name"):
         return state.name
     return str(state).upper()
+
+# Robust API Call Wrapper: Handles 429 Rate Limits AND 503 Server Demand Spikes
+def generate_content_with_retry(client, model, contents, config=None, max_retries=6):
+    delay = 3.0
+    transient_indicators = [
+        "429", "RESOURCE_EXHAUSTED", "Quota", 
+        "503", "UNAVAILABLE", "500", "502", "504", 
+        "high demand", "Overloaded", "try again later"
+    ]
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(model=model, contents=contents, config=config)
+        except Exception as e:
+            err_msg = str(e)
+            if any(indicator in err_msg for indicator in transient_indicators):
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff (3s, 6s, 12s, 24s, 48s)
+                    continue
+            raise e
 
 async def synthesize_voice(text: str, voice: str, output_path: str):
     communicate = edge_tts.Communicate(text, voice)
@@ -131,7 +150,7 @@ if uploaded_file is not None:
                 st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
                 st.stop()
 
-            # 3. Multimodal Analysis using Gemini 3.6 Flash
+            # 3. Multimodal Analysis using Gemini 3.6 Flash (With Exponential Retry Wrapper)
             st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a **{script_style}** script in **{selected_voice_info['lang']}**...")
             
             target_lang = selected_voice_info["lang"]
@@ -162,7 +181,8 @@ if uploaded_file is not None:
             """
 
             try:
-                response = client.models.generate_content(
+                response = generate_content_with_retry(
+                    client,
                     model="gemini-3.6-flash",
                     contents=[video_file, prompt]
                 )
@@ -188,8 +208,8 @@ if uploaded_file is not None:
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
 
                 try:
-                    # Pass strictly creative_script in contents so no prompt instructions are spoken
-                    audio_response = client.models.generate_content(
+                    audio_response = generate_content_with_retry(
+                        client,
                         model="gemini-3.8-flash-tts",
                         contents=[creative_script],
                         config=types.GenerateContentConfig(
@@ -224,15 +244,13 @@ if uploaded_file is not None:
                 st.write(f"🎙️ Converting script to synthetic voiceover using Edge-TTS ({selected_voice_info['code']})...")
                 asyncio.run(synthesize_voice(creative_script, selected_voice_info["code"], script_audio))
 
-            # 5. Fit Audio Duration & Boost Pacing Speed via FFmpeg ATempo
+            # 5. Fit Audio Duration via FFmpeg ATempo (Respecting User Speed Multiplier)
             audio_duration = get_file_duration(script_audio)
+            needed_tempo = audio_duration / video_duration
             
-            # Calculate pacing speed: Base fit * speed slider factor
-            base_tempo = audio_duration / video_duration
-            final_tempo = max(1.0, base_tempo) * voice_speed
-            final_tempo = max(0.5, min(final_tempo, 2.0))  # Keep within FFmpeg atempo boundaries [0.5, 2.0]
-
-            st.write(f"⚡ Applying speed multiplier: **{final_tempo:.2f}x**")
+            # Combine duration-matching requirement with user speed preference
+            final_tempo = max(needed_tempo, voice_speed)
+            final_tempo = max(0.5, min(final_tempo, 2.0))
 
             subprocess.run([
                 "ffmpeg", "-y", "-i", script_audio,
@@ -255,7 +273,8 @@ if uploaded_file is not None:
                 output_video
             ], check=True)
 
-            status.update(label="✨ Fast-Paced Video Hook Successfully Overlaid!", state="complete", expanded=False)
+            status.update(label="✨ Video Hook & Script Successfully Overlaid!", state="complete", expanded=False)
 
         st.subheader("🔥 Final Video Output")
         st.video(output_video)
+        
