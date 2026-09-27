@@ -169,7 +169,7 @@ if uploaded_file is not None:
 
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Audio Voice Synthesis Path
+            # 4. Audio Voice Synthesis Path using Gemini 3.8 Flash TTS
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
                 
@@ -177,7 +177,7 @@ if uploaded_file is not None:
                 
                 try:
                     audio_response = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-3.8-flash-tts",
                         contents=[audio_prompt],
                         config=types.GenerateContentConfig(
                             response_modalities=["AUDIO"],
