@@ -6,6 +6,7 @@ import subprocess
 import streamlit as st
 import edge_tts
 from google import genai
+from google.genai import types
 
 st.set_page_config(page_title="Multimodal Video Hook Generator", layout="wide")
 st.title("🎬 Direct Multimodal Video Hook Overlay")
@@ -14,17 +15,17 @@ st.title("🎬 Direct Multimodal Video Hook Overlay")
 st.sidebar.header("Settings")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get a key from Google AI Studio")
 
-# Map selected voice to language details for Gemini
+# Integrated Voice Roster: Gemini Native & Edge-TTS
 VOICE_OPTIONS = {
-    "Hindi - Male (Madhur)": {"code": "hi-IN-MadhurNeural", "lang": "Hindi", "script_type": "Devanagari script"},
-    "Hindi - Female (Swara)": {"code": "hi-IN-SwaraNeural", "lang": "Hindi", "script_type": "Devanagari script"},
-    "English - Male (Guy)": {"code": "en-US-GuyNeural", "lang": "English", "script_type": "English text"},
-    "English - Female (Aria)": {"code": "en-US-AriaNeural", "lang": "English", "script_type": "English text"},
-    "Indian English - Female (Neerja)": {"code": "en-IN-NeerjaNeural", "lang": "Indian English", "script_type": "English text"},
-    "Marathi - Female (Aarohi)": {"code": "mr-IN-AarohiNeural", "lang": "Marathi", "script_type": "Devanagari script"},
-    "Tamil - Male (Valluvar)": {"code": "ta-IN-ValluvarNeural", "lang": "Tamil", "script_type": "Tamil script"},
-    "Telugu - Female (Shruti)": {"code": "te-IN-ShrutiNeural", "lang": "Telugu", "script_type": "Telugu script"},
-    "Bengali - Female (Tanishaa)": {"code": "bn-IN-TanishaaNeural", "lang": "Bengali", "script_type": "Bengali script"},
+    "Gemini - Charon (Hindi)": {"engine": "gemini", "code": "Charon", "lang": "Hindi", "script_type": "Devanagari script"},
+    "Gemini - Charon (Marathi)": {"engine": "gemini", "code": "Charon", "lang": "Marathi", "script_type": "Devanagari script"},
+    "Gemini - Puck (Hindi)": {"engine": "gemini", "code": "Puck", "lang": "Hindi", "script_type": "Devanagari script"},
+    "Gemini - Puck (Marathi)": {"engine": "gemini", "code": "Puck", "lang": "Marathi", "script_type": "Devanagari script"},
+    "Gemini - Kore (English)": {"engine": "gemini", "code": "Kore", "lang": "English", "script_type": "English text"},
+    "Edge - Hindi Male (Madhur)": {"engine": "edge", "code": "hi-IN-MadhurNeural", "lang": "Hindi", "script_type": "Devanagari script"},
+    "Edge - Hindi Female (Swara)": {"engine": "edge", "code": "hi-IN-SwaraNeural", "lang": "Hindi", "script_type": "Devanagari script"},
+    "Edge - Marathi Female (Aarohi)": {"engine": "edge", "code": "mr-IN-AarohiNeural", "lang": "Marathi", "script_type": "Devanagari script"},
+    "Edge - English Male (Guy)": {"engine": "edge", "code": "en-US-GuyNeural", "lang": "English", "script_type": "English text"},
 }
 
 selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
@@ -32,7 +33,13 @@ selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
 script_style = st.sidebar.selectbox(
     "Hook / Script Style",
-    ["High-Dopamine Viral Opening", "Cinematic Storytelling", "Humorous & Punchy", "Explainer Hook"]
+    [
+        "High-Dopamine Viral Opening", 
+        "Viral Explanation Mode (Hook-Scoop-Twist)", 
+        "Cinematic Storytelling", 
+        "Humorous & Punchy", 
+        "Explainer Hook"
+    ]
 )
 
 def cleanup_temp_files():
@@ -83,20 +90,16 @@ if uploaded_file is not None:
 
         with st.status("Analyzing Video & Building Audio Overlay...", expanded=True) as status:
 
-            # 1. Video Duration
             video_duration = get_file_duration(temp_video)
             st.write(f"⏱️ Video Duration: **{video_duration:.2f} seconds**")
 
-            # 2. Direct Video Upload to Gemini File API
             st.write("📹 Uploading raw video to Gemini for direct visual understanding...")
-            
             try:
                 video_file = client.files.upload(file=temp_video)
             except Exception as e:
                 st.error(f"Authentication or Upload Error: {e}")
                 st.stop()
 
-            # Wait for video processing on Google's server
             while video_file.state.name == "PROCESSING":
                 time.sleep(2)
                 video_file = client.files.get(name=video_file.name)
@@ -105,24 +108,34 @@ if uploaded_file is not None:
                 st.error("Gemini failed to process the video input.")
                 st.stop()
 
-            # 3. Multimodal Analysis & Creative Script Generation
-            st.write(f"🤖 Gemini is watching the video and writing a **{script_style}** script in **{selected_voice_info['lang']}**...")
+            st.write(f"🤖 Gemini is generating a **{script_style}** script in **{selected_voice_info['lang']}**...")
             
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
 
+            # Explanation Mode Injection
+            if script_style == "Viral Explanation Mode (Hook-Scoop-Twist)":
+                style_guide = """
+                CRITICAL STYLE: You MUST use the exact 3-part 'Hook-Scoop-Twist' anatomy.
+                1. The Hook (Contrasting Irony): Present an exaggerated, wholesome description of the subject in the video and immediately set up a surprising or slightly funny situation they've agreed to.
+                2. The Scoop (The "Inside Story" Reveal): Dive into a juicy background detail told in a casual, gossipy tone.
+                3. The Twist / Punchline: Highlight a quirky silver lining or funny dynamic, delivered with light humor.
+                """
+            else:
+                style_guide = f"Style: {script_style}."
+
             prompt = f"""
             You are a master viral video content creator.
             Watch the visuals, movement, actions, and overall context of this attached video file.
-            
             Write a high-converting, extremely interesting opening hook and creative story/script based directly on what is visually happening in the video.
 
+            {style_guide}
+
             CRITICAL LANGUAGE & CONSTRAINTS:
-            1. LANGUAGE REQUIREMENT: You MUST write the ENTIRE script natively in {target_lang} using the standard {script_type}. DO NOT use English or Hinglish if the requested language is Hindi!
+            1. LANGUAGE REQUIREMENT: You MUST write the ENTIRE script natively in {target_lang} using the standard {script_type}. YOU MUST RESPOND UNMISTAKABLY IN LANGUAGE <{target_lang}>.
             2. Total script length MUST be spoken aloud in EXACTLY {int(video_duration)} seconds or less. Target roughly {int(video_duration * 2.2)} spoken words in {target_lang}.
             3. The first sentence MUST be an immediate, viral hook to catch viewer attention in the first 3 seconds.
-            4. Style: {script_style}.
-            5. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no translation notes, no scene instructions, no labels.
+            4. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no translation notes, no scene instructions, no labels.
             """
 
             response = client.models.generate_content(
@@ -130,7 +143,6 @@ if uploaded_file is not None:
                 contents=[video_file, prompt]
             )
 
-            # Clean up uploaded file on Gemini server
             try:
                 client.files.delete(name=video_file.name)
             except Exception:
@@ -139,11 +151,44 @@ if uploaded_file is not None:
             creative_script = response.text.strip()
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Synthesize Voiceover
-            st.write(f"🎙️ Converting script to synthetic voiceover using {selected_voice_info['code']}...")
-            asyncio.run(synthesize_voice(creative_script, selected_voice_info["code"], script_audio))
+            # Dual Audio Generation Path
+            if selected_voice_info["engine"] == "gemini":
+                st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
+                
+                audio_prompt = f"Read the following text out loud in {target_lang} with highly realistic emotion, gossipy tone, and natural pacing. Do not read any punctuation literally: {creative_script}"
+                
+                audio_response = client.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=[audio_prompt],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name=selected_voice_info["code"]
+                                )
+                            )
+                        )
+                    )
+                )
+                
+                audio_bytes = None
+                if audio_response.candidates and audio_response.candidates[0].content.parts:
+                    for part in audio_response.candidates[0].content.parts:
+                        if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                            audio_bytes = part.inline_data.data
+                            break
+                
+                if audio_bytes:
+                    with open(script_audio, "wb") as f:
+                        f.write(audio_bytes)
+                else:
+                    st.error("Gemini failed to return audio data. Check your API usage or prompt.")
+                    st.stop()
+            else:
+                st.write(f"🎙️ Converting script to synthetic voiceover using Edge-TTS ({selected_voice_info['code']})...")
+                asyncio.run(synthesize_voice(creative_script, selected_voice_info["code"], script_audio))
 
-            # 5. Fit Audio Duration
             audio_duration = get_file_duration(script_audio)
             tempo = max(0.8, min(audio_duration / video_duration, 1.6))
 
@@ -154,7 +199,6 @@ if uploaded_file is not None:
                 fitted_audio
             ], capture_output=True, check=True)
 
-            # 6. FFmpeg Video Overlay
             st.write("🎬 Muxing script audio into video via FFmpeg...")
             subprocess.run([
                 "ffmpeg", "-y",
