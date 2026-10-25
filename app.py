@@ -1,4 +1,13 @@
 import os
+import sys
+
+# Force UTF-8 encoding to prevent ASCII codec errors with Unicode/Devanagari characters
+os.environ["PYTHONIOENCODING"] = "utf-8"
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import glob
 import time
 import asyncio
@@ -304,11 +313,9 @@ if uploaded_file is not None:
 
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Clean Audio Voice Synthesis Path (Fixed: strictly passing pure script to TTS without reading director instructions aloud)
+            # 4. Clean Audio Voice Synthesis Path
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
-                
-                # We pass pure creative_script to TTS and use speech_config instruction instead of prepending text
                 try:
                     audio_response = generate_content_with_retry(
                         client,
