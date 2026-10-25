@@ -211,9 +211,19 @@ if uploaded_file is not None:
     st.video(temp_video)
 
     if st.button("🚀 Analyze Video & Overlay Viral Hook"):
-        api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
+        api_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
         if not api_key:
             st.error("Please enter your Gemini API Key in the sidebar.")
+            st.stop()
+        # An API key is plain ASCII (~39 chars, starts with 'AIza'). Anything else was pasted by mistake
+        # and crashes the HTTP header encoder with "'ascii' codec can't encode characters".
+        if not api_key.isascii() or len(api_key) > 100 or any(c.isspace() for c in api_key):
+            st.error(
+                f"The Gemini API key looks wrong: {len(api_key)} characters, "
+                f"{'contains non-English characters' if not api_key.isascii() else 'unexpected length/spaces'}. "
+                "A real key is ~39 characters starting with 'AIza'. Clear the sidebar field "
+                "(and check the GEMINI_API_KEY environment variable) and paste only the key from Google AI Studio."
+            )
             st.stop()
 
         cleanup_temp_files()
