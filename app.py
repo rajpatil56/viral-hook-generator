@@ -89,13 +89,13 @@ VOICE_OPTIONS = {
     "Gemini - Algenib (Sidhu Paaji / Gravelly & Booming Male)": {
         "engine": "gemini",
         "code": "Algenib",
-        "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
+        "lang": "Hindi",
         "script_type": "Devanagari script",
     },
     "Gemini - Fenrir (Sidhu Paaji / Excitable & Passionate Male)": {
         "engine": "gemini",
         "code": "Fenrir",
-        "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
+        "lang": "Hindi",
         "script_type": "Devanagari script",
     },
     "Gemini - Kore (Hindi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Hindi", "script_type": "Devanagari script"},
@@ -261,6 +261,7 @@ if uploaded_file is not None:
             # 3. Multimodal Analysis using Gemini 3.6 Flash
             st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a structured **{script_style}** script in **{selected_voice_info['lang']}**...")
 
+            sidhu_mode = script_style.startswith("Sidhu Paaji")
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
             target_words = max(12, int(video_duration * 2.4 * voice_speed))
@@ -319,9 +320,15 @@ if uploaded_file is not None:
 
             # 3b. PASS 2 - write a fresh script from the log + context
             used = st.session_state.setdefault("used_scripts", [])
-            fresh_phrases = random.sample(CORE_PHRASES, 4)
+            if sidhu_mode:
+                persona = "You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live cricket commentary."
+                phrase_rule = "FOR THIS VIDEO, build the script around these phrases (use at least 3): " + " | ".join(random.sample(CORE_PHRASES, 4))
+            else:
+                persona = "You are a master viral video scriptwriter."
+                phrase_rule = ("Do NOT use Sidhu Paaji's style or his catchphrases (no 'ओए गुरु', 'ठोको ताली', 'चक दे फट्टे', "
+                               "'छा गया मुंडा', etc.). Follow ONLY the style guide below.")
             prompt = f"""
-            You are a master viral video content creator and legendary cricket commentator.
+            {persona}
             Below is a timestamped description of a {video_duration:.1f}-second video. Write a voiceover that matches what happens in THIS video, in order.
 
             VISUAL LOG:
@@ -334,7 +341,7 @@ if uploaded_file is not None:
 
             {style_guide}
 
-            FOR THIS VIDEO, build the script around these phrases (use at least 3): {" | ".join(fresh_phrases)}
+            {phrase_rule}
             Reference at least 2 concrete things from the visual log (a gesture, banner, crowd moment, trophy, etc.).
             Do NOT reuse wording from earlier scripts: {" || ".join(u[:80] for u in used[-5:]) or "none yet"}
 
@@ -462,7 +469,7 @@ if uploaded_file is not None:
                 output_video
             ], check=True)
 
-            status.update(label="✨ Sidhu Paaji Master Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
+            status.update(label="✨ Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
 
         st.subheader("🔥 Final Video Output")
         st.video(output_video)
