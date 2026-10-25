@@ -15,27 +15,32 @@ except ImportError:
     VOICE_SPEC = ""
 
 st.set_page_config(page_title="Multimodal Video Hook Generator", layout="wide")
-st.title("🎬 Direct Multimodal Video Hook Overlay")
+st.title("🎬 Direct Multimodal Video Hook Overlay (Sidhu Paaji Edition)")
 
 # Sidebar Configuration
 st.sidebar.header("Settings")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get a key from Google AI Studio")
 
-# Integrated Voice Roster (Set to 0% base rate so 1.0x is true 1.0x natural speed)
+# Integrated Voice Roster (Featuring Algenib & Fenrir Sidhu Paaji Voices)
 VOICE_OPTIONS = {
-    "Paaji Voice (Soul Lines - Madhur Hype)": {
-        "engine": "edge",
-        "code": "hi-IN-MadhurNeural",
-        "lang": "Hindi",
+    "Gemini - Algenib (Sidhu Paaji / Gravelly & Booming Male)": {
+        "engine": "gemini",
+        "code": "Algenib",
+        "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
         "script_type": "Devanagari script",
-        "rate": "+0%",     # Keep base at 0% so 1.0x slider = true 1x speed
-        "pitch": "+15Hz",  # Energetic Paaji pitch without rushing the tempo
+        "director_note": "Say in a loud, booming, gravelly, laughing Punjabi cricket commentator voice like Navjot Singh Sidhu Paaji with high projection and theatrical energy: "
+    },
+    "Gemini - Fenrir (Sidhu Paaji / Excitable & Passionate Male)": {
+        "engine": "gemini",
+        "code": "Fenrir",
+        "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
+        "script_type": "Devanagari script",
+        "director_note": "Speak in an extremely energetic, hyped North-Indian Punjabi dost-wala commentator tone: "
     },
     "Gemini - Kore (Hindi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Hindi", "script_type": "Devanagari script"},
     "Gemini - Kore (Marathi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Marathi", "script_type": "Devanagari script"},
     "Gemini - Kore (English)": {"engine": "gemini", "code": "Kore", "lang": "English", "script_type": "English text"},
     "Gemini - Aoede (Hindi / Deep)": {"engine": "gemini", "code": "Aoede", "lang": "Hindi", "script_type": "Devanagari script"},
-    "Gemini - Fenrir (Hindi / Bold)": {"engine": "gemini", "code": "Fenrir", "lang": "Hindi", "script_type": "Devanagari script"},
     "Gemini - Charon (Hindi)": {"engine": "gemini", "code": "Charon", "lang": "Hindi", "script_type": "Devanagari script"},
     "Gemini - Charon (Marathi)": {"engine": "gemini", "code": "Charon", "lang": "Marathi", "script_type": "Devanagari script"},
     "Gemini - Puck (Hindi)": {"engine": "gemini", "code": "Puck", "lang": "Hindi", "script_type": "Devanagari script"},
@@ -49,7 +54,7 @@ VOICE_OPTIONS = {
 selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
 selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
-# Speed multiplier now defaults to 1.00x (and allows slowing down to 0.85x if needed)
+# Speed multiplier defaults to 1.00x
 voice_speed = st.sidebar.slider(
     "⚡ Voice Delivery Speed Multiplier",
     min_value=0.85,
@@ -62,13 +67,13 @@ voice_speed = st.sidebar.slider(
 auto_fit_audio = st.sidebar.checkbox(
     "🔄 Auto-fit voice duration to match full video",
     value=True,
-    help="Stretches or compresses the audio slightly so the voiceover starts at 0s and finishes right as the video ends (prevents voice running ahead of video)."
+    help="Stretches or compresses the audio slightly so the voiceover starts at 0s and finishes right as the video ends."
 )
 
 script_style = st.sidebar.selectbox(
     "Hook / Script Style",
     [
-        "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
+        "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
         "High-Dopamine Viral Opening",
         "Viral Explanation Mode (Hook-Scoop-Twist)",
         "Cinematic Storytelling",
@@ -176,33 +181,32 @@ if uploaded_file is not None:
                 st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
                 st.stop()
 
-            # 3. Multimodal Analysis using Gemini 3.6 Flash (Timed to 1.0x Visual Pacing)
+            # 3. Multimodal Analysis using Gemini 3.6 Flash
             st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a synced **{script_style}** script in **{selected_voice_info['lang']}**...")
 
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
-            # At 1.0x natural Hindi speaking speed, ~2.4 words/sec fills the full video without finishing early
             target_words = max(12, int(video_duration * 2.4 * voice_speed))
 
-            if script_style == "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)":
-                style_guide = f"""
-                {VOICE_SPEC}
-
-                CHRONOLOGICAL SCENE-SYNCED PACING (Match the video scenes in real time):
-                - First Quarter (0% to 25% of video): HOOK (<=6 words) reacting to the opening visual! (e.g., "जीत लिया मैच और दे दिया जवाब!", "तांडव मचा दिया भाई!", "मरते-मरते बचे हैं आज!", "शर्मा जी के लौंडे ने भगा-भगा के मारा!", "गुद्दी लाल कर दी आज!")
-                - Second Quarter (25% to 50% of video): HERO LINE describing the main action/player seen in the middle of the clip ("नमनधीर का तीर चल गया", "सरपंच ने बचा लिया", "संजू का बल्ला चल गया").
-                - Third Quarter (50% to 75% of video): TWIST / ROAST reacting to the second half of the video ("लंका की लंका लगा दी", "पाकिस्तान को धूल चटा दी", "भाई कंट्रोवर्सी क्यों करते हो").
-                - Final Quarter (75% to 100% of video): CLOSER wrapping up right as the video ends ("तो जीत तो जीत है!", "पूरी टीम ने जिम्मेदारी निभाई!").
+            if script_style == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
+                style_guide = """
+                CRITICAL PERSONA: Navjot Singh Sidhu ("Sidhu Paaji") Live Commentary Style!
+                - Tone: Booming, theatrical, joyful Punjabi Paaji energy mixed with punchy Hindi/Punjabi idioms and one-liner rhymes.
+                - Signature phrases to weave in naturally: "ओए गुरु!" (Oye Guru!), "ठोको ताली!" (Thoko Taali!), "चक दे फट्टे!" (Chak de phatte!), "छा गया मुंडा!" (Chha gaya munda!), "गगनचुंबी शॉट!" (Gagan-chumbi shot!).
+                - Chronological Pacing:
+                  1. [0-25%]: Explosive Sidhu Paaji exclamation reacting to the opening frame.
+                  2. [25-75%]: Vivid, larger-than-life description of the main action in the video with a classic Sidhu-style metaphor.
+                  3. [75-100%]: Grand punchline closer ending with "ठोको ताली!" or a victorious Punjabi verdict.
                 """
             elif script_style == "Viral Explanation Mode (Hook-Scoop-Twist)":
                 style_guide = """
                 CRITICAL STYLE: You MUST use the exact 3-part 'Hook-Scoop-Twist' anatomy synced chronologically to the video:
-                1. The Hook (Beginning of video): Present an exaggerated, wholesome description of the subject in the video and set up the situation.
-                2. The Scoop (Middle of video): Dive into the background detail matching the middle action in a casual tone.
-                3. The Twist / Punchline (End of video): Highlight a quirky silver lining or funny closer right at the end.
+                1. The Hook (Beginning of video): Exaggerated description + set up situation.
+                2. The Scoop (Middle of video): Background detail matching middle action.
+                3. The Twist / Punchline (End of video): Quirky silver lining or funny closer.
                 """
             else:
-                style_guide = f"Style: {script_style}. Ensure the narration follows the beginning, middle, and end of the video chronologically."
+                style_guide = f"Style: {script_style}. Ensure narration follows the beginning, middle, and end of the video chronologically."
 
             prompt = f"""
             You are a master viral video content creator.
@@ -240,14 +244,17 @@ if uploaded_file is not None:
 
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Clean Audio Voice Synthesis Path (At true 1.0x base speed)
+            # 4. Clean Audio Voice Synthesis Path
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
+                director_prefix = selected_voice_info.get("director_note", "")
+                tts_input = f"{director_prefix}{creative_script}" if director_prefix else creative_script
+
                 try:
                     audio_response = generate_content_with_retry(
                         client,
                         model="gemini-3.8-flash-tts",
-                        contents=[creative_script],
+                        contents=[tts_input],
                         config=types.GenerateContentConfig(
                             response_modalities=["AUDIO"],
                             speech_config=types.SpeechConfig(
@@ -293,12 +300,9 @@ if uploaded_file is not None:
             st.write(f"🔊 Raw Voice Duration: **{audio_duration:.2f}s** | Target Video Duration: **{video_duration:.2f}s**")
 
             if auto_fit_audio:
-                # Calculate exact ratio so audio neither races ahead (2x) nor gets cut off
                 needed_tempo = audio_duration / video_duration
-                # Clamp tempo between 0.85x and 1.35x so voice always sounds natural and synced
                 final_tempo = max(0.85, min(needed_tempo, 1.35))
             else:
-                # Strictly use the user's manual slider (1.0x default), unless audio is longer than video
                 if audio_duration / voice_speed > video_duration:
                     final_tempo = min(audio_duration / video_duration, 1.50)
                 else:
@@ -306,8 +310,6 @@ if uploaded_file is not None:
 
             st.write(f"⚡ Applied Audio Speed Multiplier: **{final_tempo:.2f}x**")
 
-            # Use `apad` to pad silence at the end if audio finishes slightly early,
-            # and trim at `video_duration` so the video is NEVER cut short!
             audio_filter = (
                 f"atempo={final_tempo},"
                 f"loudnorm=I=-14.0:TP=-1.5:LRA=11,"
@@ -322,7 +324,7 @@ if uploaded_file is not None:
                 fitted_audio
             ], capture_output=True, check=True)
 
-            # 6. Mux Final Audio/Video (Removed `-shortest` so video is NEVER cut in half!)
+            # 6. Mux Final Audio/Video (Full Video Preserved)
             st.write("🎬 Muxing synced audio into full video via FFmpeg...")
             subprocess.run([
                 "ffmpeg", "-y",
@@ -338,7 +340,7 @@ if uploaded_file is not None:
                 output_video
             ], check=True)
 
-            status.update(label="✨ Video Hook & Script Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
+            status.update(label="✨ Sidhu Paaji Video Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
 
         st.subheader("🔥 Final Video Output")
         st.video(output_video)
