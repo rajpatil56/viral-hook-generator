@@ -84,14 +84,12 @@ VOICE_OPTIONS = {
         "code": "Algenib",
         "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
         "script_type": "Devanagari script",
-        "director_note": "Say in a loud, booming, gravelly, laughing Punjabi cricket commentator voice like Navjot Singh Sidhu Paaji with high projection and theatrical energy: "
     },
     "Gemini - Fenrir (Sidhu Paaji / Excitable & Passionate Male)": {
         "engine": "gemini",
         "code": "Fenrir",
         "lang": "Punjabi-flavored Hindi (Sidhu Paaji style)",
         "script_type": "Devanagari script",
-        "director_note": "Speak in an extremely energetic, hyped North-Indian Punjabi dost-wala commentator tone: "
     },
     "Gemini - Kore (Hindi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Hindi", "script_type": "Devanagari script"},
     "Gemini - Kore (Marathi / Energetic)": {"engine": "gemini", "code": "Kore", "lang": "Marathi", "script_type": "Devanagari script"},
@@ -244,7 +242,6 @@ if uploaded_file is not None:
             script_type = selected_voice_info["script_type"]
             target_words = max(12, int(video_duration * 2.4 * voice_speed))
 
-            # Restored all style mode options
             if script_style == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
                 style_guide = get_sidhu_style_guide(lang_note=script_type)
             elif script_style == "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)":
@@ -307,17 +304,16 @@ if uploaded_file is not None:
 
             st.markdown(f"**Generated Script ({target_lang}):**\n> {creative_script}")
 
-            # 4. Clean Audio Voice Synthesis Path
+            # 4. Clean Audio Voice Synthesis Path (Fixed: strictly passing pure script to TTS without reading director instructions aloud)
             if selected_voice_info["engine"] == "gemini":
                 st.write(f"🎙️ Generating native AI dub using Gemini ({selected_voice_info['code']}) voice...")
-                director_prefix = selected_voice_info.get("director_note", "")
-                tts_input = f"{director_prefix}{creative_script}" if director_prefix else creative_script
-
+                
+                # We pass pure creative_script to TTS and use speech_config instruction instead of prepending text
                 try:
                     audio_response = generate_content_with_retry(
                         client,
                         model="gemini-3.8-flash-tts",
-                        contents=[tts_input],
+                        contents=[creative_script],
                         config=types.GenerateContentConfig(
                             response_modalities=["AUDIO"],
                             speech_config=types.SpeechConfig(
