@@ -46,11 +46,9 @@ RULES = (
 )
 
 FEW_SHOT = [
-    "ओए गुरु, तांडव मचा दिया! छा गया मुंडा, बत्तीस गेंद में बयासी रन, गगनचुंबी छक्के भगा-भगा के मारे! "
-    "अफ़ग़ानिस्तान की आत्मा निकाल दी। भाई कंट्रोवर्सी क्यों करते हो, खेल देखो! ठोको ताली!",
-    "ओए गुरु! गोल्ड जीत लिया! पाकिस्तान को धूल चटा दी, अभिषेक और तिलक ने भगा-भगा के मारा। "
-    "चक दे फट्टे, नप दे किल्ली! ठोको ताली!",
-    "ओए गुरु, मरते-मरते बचे! सिर्फ़ दो रन से जीत। जापान ने तो पेपर लीक कर दिया था हमारा! ठोको ताली!",
+    "ओए गुरु, [हुक: दृश्य पर प्रतिक्रिया]! [खिलाड़ी] छा गया मुंडा, [स्कोर] भगा-भगा के मारा! [विपक्ष] को धूल चटा दी। ठोको ताली!",
+    "[खिलाड़ी] ने तांडव मचा दिया, गगनचुंबी छक्का! [विपक्ष] की आत्मा निकाल दी। चक दे फट्टे, नप दे किल्ली!",
+    "ओए गुरु, [स्थिति] देखो! [खिलाड़ी] का [काम]। भाई कंट्रोवर्सी क्यों करते हो, खेल देखो! ठोको ताली!",
 ]
 
 def get_sidhu_style_guide(lang_note="Devanagari"):
@@ -73,7 +71,7 @@ SCENE-SYNCED PACING (chronological, follow the visuals):
 3. 50-75% TWIST/ROAST: rival, critic or drama ("धूल चटा दी", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो")
 4. 75-100% CLOSER: theatrical finish landing exactly as video ends ("ठोको ताली!" / "चक दे फट्टे, नप दे किल्ली!")
 
-EXAMPLES OF THE TARGET STYLE ({lang_note}):
+STRUCTURE TEMPLATES ONLY ({lang_note}) — brackets are placeholders. NEVER copy these sentences; invent fresh lines from what is actually in THIS video:
 {ex}
 
 RULES: {RULES}
@@ -145,6 +143,12 @@ script_style = st.sidebar.selectbox(
     ]
 )
 
+
+match_context = st.sidebar.text_area(
+    "Match / player context (recommended)",
+    placeholder="e.g. India vs Pakistan Asian Games final. Abhishek Sharma 61 off 28, Tilak Varma 51* off 22. India won by 19 runs.",
+    help="Gemini does not identify people by face. Put the real names, teams and scores here and they will be used in the script."
+)
 
 def cleanup_temp_files():
     patterns = ["temp_input.mp4", "generated_voice.mp3", "fitted_voice.wav", "output_hooked.mp4"]
@@ -288,24 +292,64 @@ if uploaded_file is not None:
             else:
                 style_guide = f"Style: {script_style}. Ensure narration follows the beginning, middle, and end of the video chronologically."
 
+            # 3a. PASS 1 - actually watch the video: timestamped visual log
+            st.write("👀 Pass 1: watching the video frame-by-frame (2 fps)...")
+            video_part = types.Part(
+                file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
+                video_metadata=types.VideoMetadata(fps=2),
+            )
+            watch_prompt = f"""
+            Watch this {video_duration:.1f}-second video carefully. Produce a timestamped log, one line per ~1-2 seconds, in English:
+            [mm:ss] what is visibly happening (action, camera shot, crowd, stands, trophy, scoreboard, gestures, emotion).
+            ALSO list every piece of READABLE text you can see: jersey names/numbers, banners, posters, scoreboard, captions, sponsor/venue boards.
+            Rules: describe only what is visible. Do NOT identify any person from their face or looks. If a person is not named by readable
+            text or by this user context, call them "unidentified player/fan/person".
+            User context (may name teams/players/scores): {match_context or "none provided"}
+            Output only the log.
+            """
+            try:
+                watch = generate_content_with_retry(client, model="gemini-3.6-flash", contents=[video_part, watch_prompt],
+                                                    config=types.GenerateContentConfig(temperature=0.2))
+                visual_log = (watch.text or "").strip()
+            except Exception as err:
+                st.error(f"Video analysis failed: {err}")
+                st.stop()
+            with st.expander("🔎 What the AI saw in your video"):
+                st.text(visual_log)
+
+            # 3b. PASS 2 - write a fresh script from the log + context
+            used = st.session_state.setdefault("used_scripts", [])
+            fresh_phrases = random.sample(CORE_PHRASES, 4)
             prompt = f"""
             You are a master viral video content creator and legendary cricket commentator.
-            Watch the visuals, movement, actions, and exact timeline of this attached {video_duration:.1f}-second video file.
-            Write a high-converting voiceover script that stays strictly in sync with what is visually happening from start (0s) to finish ({video_duration:.1f}s).
+            Below is a timestamped description of a {video_duration:.1f}-second video. Write a voiceover that matches what happens in THIS video, in order.
+
+            VISUAL LOG:
+            {visual_log}
+
+            USER CONTEXT (source of truth for real names / teams / scores): {match_context or "none provided"}
+
+            NAMING RULES: Use a player's/team's real name ONLY if it appears in the user context or as readable text in the log.
+            Never guess a name from a face. If no name is known, say "यह खिलाड़ी", "ये मुंडा", "भारत की टीम", "स्टेडियम" etc. Never invent scores/stats.
 
             {style_guide}
 
+            FOR THIS VIDEO, build the script around these phrases (use at least 3): {" | ".join(fresh_phrases)}
+            Reference at least 2 concrete things from the visual log (a gesture, banner, crowd moment, trophy, etc.).
+            Do NOT reuse wording from earlier scripts: {" || ".join(u[:80] for u in used[-5:]) or "none yet"}
+
             CRITICAL LANGUAGE & TIMING CONSTRAINTS:
-            1. LANGUAGE REQUIREMENT: You MUST write the ENTIRE script natively in {target_lang} using standard {script_type}. YOU MUST RESPOND UNMISTAKABLY IN LANGUAGE <{target_lang}>.
-            2. EXACT LENGTH FOR FULL VIDEO COVERAGE: The video is {video_duration:.1f} seconds long. Write approximately **{target_words} words** in {target_lang} so that when spoken at normal 1x speed, the voiceover covers the ENTIRE video and does not finish early.
-            3. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no timestamps, no translation notes, no scene instructions, no labels.
+            1. Write the ENTIRE script natively in {target_lang} using standard {script_type}.
+            2. Write approximately **{target_words} words** so it covers the whole video at 1x speed.
+            3. Output ONLY the plain script text. No markdown, no timestamps, no labels.
             """
 
             try:
                 response = generate_content_with_retry(
                     client,
                     model="gemini-3.6-flash",
-                    contents=[video_file, prompt]
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(temperature=1.2, top_p=0.95)
                 )
             except Exception as err:
                 st.error(f"Error generating script with gemini-3.6-flash: {err}")
@@ -317,6 +361,8 @@ if uploaded_file is not None:
                 pass
 
             creative_script = response.text.strip() if response.text else ""
+            if creative_script:
+                st.session_state.setdefault("used_scripts", []).append(creative_script)
             if not creative_script:
                 st.error("Generated script was empty. Please try again.")
                 st.stop()
