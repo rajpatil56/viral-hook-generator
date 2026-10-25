@@ -7,15 +7,71 @@ import streamlit as st
 import edge_tts
 from google import genai
 from google.genai import types
+import random
 
-# Import Soul Lines voiceover specifications if soullines_voice.py is present
-try:
-    from soullines_voice import VOICE_SPEC
-except ImportError:
-    VOICE_SPEC = ""
+# --- EXACT SIDHU PAAJI COMMENTARY DATA MODULE ---
+CORE_PHRASES = [
+    "ओए गुरु!", "ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "छा गया मुंडा!",
+    "गगनचुंबी छक्का!", "धूल चटा दी", "आत्मा निकाल दी", "तांडव मचा दिया",
+    "भगा-भगा के मारा", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो",
+]
+
+EXTRA_PHRASES = {
+    "hook":    ["ओए गुरु, क्या बात है!", "ओए गुरु, तांडव!", "शेर आया शेर!", "हो गया कमाल!"],
+    "six":     ["गगनचुंबी छक्का!", "गेंद स्टेडियम के बाहर, गुरु!", "सीधा आसमान में!", "बल्ला बोला, बॉल रोई!"],
+    "praise": ["छा गया मुंडा!", "क्या खिलाड़ी है, गुरु!", "शेर दा पुत्तर!", "बादशाह है बादशाह!"],
+    "roast":  ["धूल चटा दी", "आत्मा निकाल दी", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो", "बोलती बंद कर दी"],
+    "closer": ["ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "तिरंगा लहरा दिया, गुरु!", "जय हिंद, ठोको ताली!"],
+}
+
+DELIVERY = (
+    "Loud, booming, laughing Punjabi-flavoured Hindi. Theatrical pauses before the punch word, "
+    "rising energy at every sentence end, 'गुरु' as a filler, rhetorical questions to the audience, "
+    "Punjabi words mixed in (मुंडा, फट्टे, शेर, पुत्तर). Never calm, never news-anchor flat."
+)
+
+RULES = (
+    "Use 3-4 catchphrases total, never the same phrase twice. Facts (runs, balls, scores, names) must be "
+    "visible in the video or given by the user; never invent stats. Keep it playful, no abuse, no real "
+    "personal attacks; rivals are roasted on the cricket field only."
+)
+
+FEW_SHOT = [
+    "ओए गुरु, तांडव मचा दिया! छा गया मुंडा, बत्तीस गेंद में बयासी रन, गगनचुंबी छक्के भगा-भगा के मारे! "
+    "अफ़ग़ानिस्तान की आत्मा निकाल दी। भाई कंट्रोवर्सी क्यों करते हो, खेल देखो! ठोको ताली!",
+    "ओए गुरु! गोल्ड जीत लिया! पाकिस्तान को धूल चटा दी, अभिषेक और तिलक ने भगा-भगा के मारा। "
+    "चक दे फट्टे, नप दे किल्ली! ठोको ताली!",
+    "ओए गुरु, मरते-मरते बचे! सिर्फ़ दो रन से जीत। जापान ने तो पेपर लीक कर दिया था हमारा! ठोको ताली!",
+]
+
+def get_sidhu_style_guide(lang_note="Devanagari"):
+    core = "\n".join(f'- "{p}"' for p in CORE_PHRASES)
+    ex = "\n".join(f"  • {s}" for s in FEW_SHOT)
+    bank = "\n".join(f"  {k}: " + " | ".join(v) for k, v in EXTRA_PHRASES.items())
+    return f"""
+CRITICAL PERSONA: Navjot Singh Sidhu ("Sidhu Paaji") live commentary.
+DELIVERY: {DELIVERY}
+
+MANDATORY SIGNATURE PHRASES (use 3-4, natural, none repeated):
+{core}
+
+EXTRA PHRASE BANK BY MOMENT:
+{bank}
+
+SCENE-SYNCED PACING (chronological, follow the visuals):
+1. 0-25%  HOOK (<=6 words): explosive reaction to the opening visual, e.g. "ओए गुरु, तांडव मचा दिया!"
+2. 25-50% HERO LINE: the main player/action on screen ("छा गया मुंडा", "भगा-भगा के मारा", "गगनचुंबी छक्का!")
+3. 50-75% TWIST/ROAST: rival, critic or drama ("धूल चटा दी", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो")
+4. 75-100% CLOSER: theatrical finish landing exactly as video ends ("ठोको ताली!" / "चक दे फट्टे, नप दे किल्ली!")
+
+EXAMPLES OF THE TARGET STYLE ({lang_note}):
+{ex}
+
+RULES: {RULES}
+"""
 
 st.set_page_config(page_title="Multimodal Video Hook Generator", layout="wide")
-st.title("🎬 Direct Multimodal Video Hook Overlay (Sidhu Paaji Edition)")
+st.title("🎬 Direct Multimodal Video Hook Overlay (Sidhu Paaji Master Edition)")
 
 # Sidebar Configuration
 st.sidebar.header("Settings")
@@ -54,14 +110,13 @@ VOICE_OPTIONS = {
 selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
 selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
-# Speed multiplier defaults to 1.00x
 voice_speed = st.sidebar.slider(
     "⚡ Voice Delivery Speed Multiplier",
     min_value=0.85,
     max_value=1.50,
     value=1.00,
     step=0.05,
-    help="1.00x is natural synced speed. Increase only if you want faster delivery."
+    help="1.00x is natural synced speed."
 )
 
 auto_fit_audio = st.sidebar.checkbox(
@@ -74,6 +129,7 @@ script_style = st.sidebar.selectbox(
     "Hook / Script Style",
     [
         "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
+        "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
         "High-Dopamine Viral Opening",
         "Viral Explanation Mode (Hook-Scoop-Twist)",
         "Cinematic Storytelling",
@@ -182,21 +238,23 @@ if uploaded_file is not None:
                 st.stop()
 
             # 3. Multimodal Analysis using Gemini 3.6 Flash
-            st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a synced **{script_style}** script in **{selected_voice_info['lang']}**...")
+            st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a structured **{script_style}** script in **{selected_voice_info['lang']}**...")
 
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
             target_words = max(12, int(video_duration * 2.4 * voice_speed))
 
+            # Restored all style mode options
             if script_style == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
+                style_guide = get_sidhu_style_guide(lang_note=script_type)
+            elif script_style == "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)":
                 style_guide = """
-                CRITICAL PERSONA: Navjot Singh Sidhu ("Sidhu Paaji") Live Commentary Style!
-                - Tone: Booming, theatrical, joyful Punjabi Paaji energy mixed with punchy Hindi/Punjabi idioms and one-liner rhymes.
-                - Signature phrases to weave in naturally: "ओए गुरु!" (Oye Guru!), "ठोको ताली!" (Thoko Taali!), "चक दे फट्टे!" (Chak de phatte!), "छा गया मुंडा!" (Chha gaya munda!), "गगनचुंबी शॉट!" (Gagan-chumbi shot!).
-                - Chronological Pacing:
-                  1. [0-25%]: Explosive Sidhu Paaji exclamation reacting to the opening frame.
-                  2. [25-75%]: Vivid, larger-than-life description of the main action in the video with a classic Sidhu-style metaphor.
-                  3. [75-100%]: Grand punchline closer ending with "ठोको ताली!" or a victorious Punjabi verdict.
+                CRITICAL PERSONA: A loud, hyped, dost-wala male narrator.
+                CHRONOLOGICAL SCENE-SYNCED PACING:
+                - [0-25%]: HOOK reacting to opening visual.
+                - [25-50%]: HERO LINE describing main action.
+                - [50-75%]: TWIST / ROAST reacting to match drama.
+                - [75-100%]: CLOSER wrapping up right as the video ends.
                 """
             elif script_style == "Viral Explanation Mode (Hook-Scoop-Twist)":
                 style_guide = """
@@ -205,21 +263,26 @@ if uploaded_file is not None:
                 2. The Scoop (Middle of video): Background detail matching middle action.
                 3. The Twist / Punchline (End of video): Quirky silver lining or funny closer.
                 """
+            elif script_style == "High-Dopamine Viral Opening":
+                style_guide = "Style: High-Dopamine Viral Opening. Deliver an electrifying, fast-paced statement that immediately hooks the viewer within the first 2 seconds."
+            elif script_style == "Cinematic Storytelling":
+                style_guide = "Style: Cinematic Storytelling. Narrate the video with a dramatic, movie-trailer voice, emphasizing epic scaling and visual impact."
+            elif script_style == "Humorous & Punchy":
+                style_guide = "Style: Humorous & Punchy. Poke fun at the visuals with witty sarcasm and light-hearted comedy."
             else:
                 style_guide = f"Style: {script_style}. Ensure narration follows the beginning, middle, and end of the video chronologically."
 
             prompt = f"""
-            You are a master viral video content creator.
+            You are a master viral video content creator and legendary cricket commentator.
             Watch the visuals, movement, actions, and exact timeline of this attached {video_duration:.1f}-second video file.
-            Write a high-converting voiceover script that stays in sync with what is visually happening from start (0s) to finish ({video_duration:.1f}s).
+            Write a high-converting voiceover script that stays strictly in sync with what is visually happening from start (0s) to finish ({video_duration:.1f}s).
 
             {style_guide}
 
             CRITICAL LANGUAGE & TIMING CONSTRAINTS:
             1. LANGUAGE REQUIREMENT: You MUST write the ENTIRE script natively in {target_lang} using standard {script_type}. YOU MUST RESPOND UNMISTAKABLY IN LANGUAGE <{target_lang}>.
             2. EXACT LENGTH FOR FULL VIDEO COVERAGE: The video is {video_duration:.1f} seconds long. Write approximately **{target_words} words** in {target_lang} so that when spoken at normal 1x speed, the voiceover covers the ENTIRE video and does not finish early.
-            3. CHRONOLOGICAL SYNC: Do NOT rush to the ending in the first few words. Describe the events in the exact order they appear in the video.
-            4. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no timestamps, no translation notes, no scene instructions, no labels.
+            3. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no timestamps, no translation notes, no scene instructions, no labels.
             """
 
             try:
@@ -340,7 +403,7 @@ if uploaded_file is not None:
                 output_video
             ], check=True)
 
-            status.update(label="✨ Sidhu Paaji Video Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
+            status.update(label="✨ Sidhu Paaji Master Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
 
         st.subheader("🔥 Final Video Output")
         st.video(output_video)
