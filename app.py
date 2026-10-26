@@ -28,9 +28,9 @@ CORE_PHRASES = [
 EXTRA_PHRASES = {
     "hook":    ["ओए गुरु, क्या बात है!", "ओए गुरु, तांडव!", "शेर आया शेर!", "हो गया कमाल!"],
     "six":     ["गगनचुंबी छक्का!", "गेंद स्टेडियम के बाहर, गुरु!", "सीधा आसमान में!", "बल्ला बोला, बॉल रोई!"],
-    "praise": ["छा गया मुंडा!", "क्या खिलाड़ी है, गुरु!", "शेर दा पुत्तर!", "बादशाह है बादशाह!"],
-    "roast":  ["धूल चटा दी", "आत्मा निकाल दी", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो", "बोलती बंद कर दी"],
-    "closer": ["ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "तिरंगा लहरा दिया, गुरु!", "जय हिंद, ठोको ताली!"],
+    "praise":  ["छा गया मुंडा!", "क्या खिलाड़ी है, गुरु!", "शेर दा पुत्तर!", "बादशाह है बादशाह!"],
+    "roast":   ["धूल चटा दी", "आत्मा निकाल दी", "पेपर लीक", "भाई कंट्रोवर्सी क्यों करते हो", "बोलती बंद कर दी"],
+    "closer":  ["ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "तिरंगा लहरा दिया, गुरु!", "जय हिंद, ठोको ताली!"],
 }
 
 DELIVERY = (
@@ -134,6 +134,7 @@ script_style = st.sidebar.selectbox(
     "Hook / Script Style",
     [
         "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
+        "Custom Story Mode (Exact & Enhanced)",
         "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
         "High-Dopamine Viral Opening",
         "Viral Explanation Mode (Hook-Scoop-Twist)",
@@ -143,12 +144,22 @@ script_style = st.sidebar.selectbox(
     ]
 )
 
+if script_style == "Custom Story Mode (Exact & Enhanced)":
+    user_story = st.sidebar.text_area(
+        "📖 Write Your Story (AI will keep it as-is & enhance flow)",
+        height=160,
+        placeholder="Write or paste your exact story/script here. The AI will keep all your points, events, and meaning intact, polish the delivery, and sync it to the video.",
+        help="Your story will be kept faithful to what you wrote, enhanced for natural spoken flow, and timed to the video."
+    )
+    match_context = user_story
+else:
+    user_story = ""
+    match_context = st.sidebar.text_area(
+        "Match / player context (recommended)",
+        placeholder="e.g. India vs Pakistan Asian Games final. Abhishek Sharma 61 off 28, Tilak Varma 51* off 22. India won by 19 runs.",
+        help="Gemini does not identify people by face. Put the real names, teams and scores here and they will be used in the script."
+    )
 
-match_context = st.sidebar.text_area(
-    "Match / player context (recommended)",
-    placeholder="e.g. India vs Pakistan Asian Games final. Abhishek Sharma 61 off 28, Tilak Varma 51* off 22. India won by 19 runs.",
-    help="Gemini does not identify people by face. Put the real names, teams and scores here and they will be used in the script."
-)
 
 def cleanup_temp_files():
     patterns = ["temp_input.mp4", "generated_voice.mp3", "fitted_voice.wav", "output_hooked.mp4"]
@@ -219,8 +230,6 @@ if uploaded_file is not None:
         if not api_key:
             st.error("Please enter your Gemini API Key in the sidebar.")
             st.stop()
-        # An API key is plain ASCII (~39 chars, starts with 'AIza'). Anything else was pasted by mistake
-        # and crashes the HTTP header encoder with "'ascii' codec can't encode characters".
         if not api_key.isascii() or len(api_key) > 100 or any(c.isspace() for c in api_key):
             st.error(
                 f"The Gemini API key looks wrong: {len(api_key)} characters, "
@@ -228,6 +237,10 @@ if uploaded_file is not None:
                 "A real key is ~39 characters starting with 'AIza'. Clear the sidebar field "
                 "(and check the GEMINI_API_KEY environment variable) and paste only the key from Google AI Studio."
             )
+            st.stop()
+
+        if script_style == "Custom Story Mode (Exact & Enhanced)" and not user_story.strip():
+            st.error("Please write your story in the sidebar 'Write Your Story' box first.")
             st.stop()
 
         cleanup_temp_files()
@@ -262,12 +275,24 @@ if uploaded_file is not None:
             st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a structured **{script_style}** script in **{selected_voice_info['lang']}**...")
 
             sidhu_mode = script_style.startswith("Sidhu Paaji")
+            custom_story_mode = (script_style == "Custom Story Mode (Exact & Enhanced)")
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
             target_words = max(12, int(video_duration * 2.4 * voice_speed))
 
             if script_style == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
                 style_guide = get_sidhu_style_guide(lang_note=script_type)
+            elif custom_story_mode:
+                style_guide = f"""
+                CRITICAL STYLE: Custom Story Mode (Exact & Enhanced).
+                The user has provided their own story/script below:
+                \"\"\"{user_story.strip()}\"\"\"
+
+                STRICT INSTRUCTIONS FOR CUSTOM STORY MODE:
+                1. KEEP IT AS-IS & BETTER: Preserve 100% of the user's storyline, facts, names, sequence of events, and core meaning. Do NOT change the plot or invent unrelated things.
+                2. ENHANCE & POLISH: Refine the sentences so they sound natural, smooth, and impactful when spoken aloud as a professional voiceover, while aligning naturally with the visual timeline of the video.
+                3. PACING: Fit the enhanced story cleanly into approximately {target_words} words in {target_lang} ({script_type}) so it starts at 0s and finishes right as the {video_duration:.1f}s video ends.
+                """
             elif script_style == "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)":
                 style_guide = """
                 CRITICAL PERSONA: A loud, hyped, dost-wala male narrator.
@@ -305,12 +330,16 @@ if uploaded_file is not None:
             ALSO list every piece of READABLE text you can see: jersey names/numbers, banners, posters, scoreboard, captions, sponsor/venue boards.
             Rules: describe only what is visible. Do NOT identify any person from their face or looks. If a person is not named by readable
             text or by this user context, call them "unidentified player/fan/person".
-            User context (may name teams/players/scores): {match_context or "none provided"}
+            User context (may name teams/players/scores/story): {match_context or "none provided"}
             Output only the log.
             """
             try:
-                watch = generate_content_with_retry(client, model="gemini-3.6-flash", contents=[video_part, watch_prompt],
-                                                    config=types.GenerateContentConfig(temperature=0.2))
+                watch = generate_content_with_retry(
+                    client,
+                    model="gemini-3.6-flash",
+                    contents=[video_part, watch_prompt],
+                    config=types.GenerateContentConfig(temperature=0.2)
+                )
                 visual_log = (watch.text or "").strip()
             except Exception as err:
                 st.error(f"Video analysis failed: {err}")
@@ -318,32 +347,39 @@ if uploaded_file is not None:
             with st.expander("🔎 What the AI saw in your video"):
                 st.text(visual_log)
 
-            # 3b. PASS 2 - write a fresh script from the log + context
+            # 3b. PASS 2 - write the script
             used = st.session_state.setdefault("used_scripts", [])
             if sidhu_mode:
                 persona = "You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live cricket commentary."
                 phrase_rule = "FOR THIS VIDEO, build the script around these phrases (use at least 3): " + " | ".join(random.sample(CORE_PHRASES, 4))
+            elif custom_story_mode:
+                persona = "You are an expert voiceover script editor and storyteller."
+                phrase_rule = (
+                    "Follow the user's custom story faithfully as-is while making the phrasing sharper, clearer, and better flowing. "
+                    "Do NOT add Sidhu Paaji catchphrases unless the user wrote them in their story."
+                )
             else:
                 persona = "You are a master viral video scriptwriter."
-                phrase_rule = ("Do NOT use Sidhu Paaji's style or his catchphrases (no 'ओए गुरु', 'ठोको ताली', 'चक दे फट्टे', "
-                               "'छा गया मुंडा', etc.). Follow ONLY the style guide below.")
+                phrase_rule = (
+                    "Do NOT use Sidhu Paaji's style or his catchphrases (no 'ओए गुरु', 'ठोको ताली', 'चक दे फट्टे', "
+                    "'छा गया मुंडा', etc.). Follow ONLY the style guide below."
+                )
+
             prompt = f"""
             {persona}
-            Below is a timestamped description of a {video_duration:.1f}-second video. Write a voiceover that matches what happens in THIS video, in order.
+            Below is a timestamped description of a {video_duration:.1f}-second video. Write a voiceover that matches THIS video and the instructions below.
 
             VISUAL LOG:
             {visual_log}
 
-            USER CONTEXT (source of truth for real names / teams / scores): {match_context or "none provided"}
+            USER CONTEXT / STORY (source of truth for real names / teams / scores / plot): {match_context or "none provided"}
 
-            NAMING RULES: Use a player's/team's real name ONLY if it appears in the user context or as readable text in the log.
-            Never guess a name from a face. If no name is known, say "यह खिलाड़ी", "ये मुंडा", "भारत की टीम", "स्टेडियम" etc. Never invent scores/stats.
+            NAMING RULES: Use a player's/person's/team's real name ONLY if it appears in the user context/story or as readable text in the log.
+            Never guess a name from a face. Never invent scores/stats.
 
             {style_guide}
 
             {phrase_rule}
-            Reference at least 2 concrete things from the visual log (a gesture, banner, crowd moment, trophy, etc.).
-            Do NOT reuse wording from earlier scripts: {" || ".join(u[:80] for u in used[-5:]) or "none yet"}
 
             CRITICAL LANGUAGE & TIMING CONSTRAINTS:
             1. Write the ENTIRE script natively in {target_lang} using standard {script_type}.
@@ -356,7 +392,7 @@ if uploaded_file is not None:
                     client,
                     model="gemini-3.6-flash",
                     contents=[prompt],
-                    config=types.GenerateContentConfig(temperature=1.2, top_p=0.95)
+                    config=types.GenerateContentConfig(temperature=0.7 if custom_story_mode else 1.1, top_p=0.95)
                 )
             except Exception as err:
                 st.error(f"Error generating script with gemini-3.6-flash: {err}")
