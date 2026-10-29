@@ -14,8 +14,6 @@ import time
 import random
 import asyncio
 import subprocess
-import urllib.request
-import urllib.parse
 import streamlit as st
 import edge_tts
 from google import genai
@@ -80,8 +78,8 @@ STRUCTURE TEMPLATES ONLY ({lang_note}) — brackets are placeholders. NEVER copy
 RULES: {RULES}
 """
 
-st.set_page_config(page_title="Multimodal Video Hook Generator", layout="wide")
-st.title("🎬 Direct Multimodal Video Hook & Free Auto-Video Generator")
+st.set_page_config(page_title="Multimodal Video Hook & Highlight Clipper", layout="wide")
+st.title("🎬 Direct Multimodal Video Hook & Auto Highlight Short Maker")
 
 # Sidebar Configuration
 st.sidebar.header("Settings")
@@ -115,22 +113,10 @@ VOICE_OPTIONS = {
     "Edge - English Male (Guy)": {"engine": "edge", "code": "en-US-GuyNeural", "lang": "English", "script_type": "English text", "rate": "+0%", "pitch": "+0Hz"},
 }
 
-selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
-selected_voice_info = VOICE_OPTIONS[selected_voice_label]
-
-voice_speed = st.sidebar.slider(
-    "⚡ Voice Delivery Speed Multiplier",
-    min_value=0.85,
-    max_value=1.50,
-    value=1.00,
-    step=0.05,
-    help="1.00x is natural synced speed."
-)
-
 script_style = st.sidebar.selectbox(
-    "Hook / Script Style",
+    "Mode / Script Style",
     [
-        "Custom Story Mode (Exact Script + Free Auto Video)",
+        "Auto Highlight Clipper (Cut & Join Best Moments into 1 Short)",
         "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
         "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
         "High-Dopamine Viral Opening",
@@ -141,76 +127,67 @@ script_style = st.sidebar.selectbox(
     ]
 )
 
-custom_story_mode = (script_style == "Custom Story Mode (Exact Script + Free Auto Video)")
+highlight_clipper_mode = (script_style == "Auto Highlight Clipper (Cut & Join Best Moments into 1 Short)")
 
-if not custom_story_mode:
-    auto_fit_audio = st.sidebar.checkbox(
-        "🔄 Auto-fit voice duration to match full video",
-        value=True,
-        help="Stretches or compresses the audio slightly so the voiceover starts at 0s and finishes right as the video ends."
+if highlight_clipper_mode:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("✂️ Highlight Clipper Settings")
+    target_short_duration = st.sidebar.slider(
+        "🎯 Target Joined Short Length (seconds)",
+        min_value=10,
+        max_value=60,
+        value=20,
+        step=5,
+        help="Total length of all exciting moments combined into one single Short."
     )
-    user_story = ""
-    match_context = st.sidebar.text_area(
-        "Match / player context (recommended)",
-        placeholder="e.g. India vs Pakistan Asian Games final. Abhishek Sharma 61 off 28, Tilak Varma 51* off 22. India won by 19 runs.",
-        help="Gemini does not identify people by face. Put the real names, teams and scores here and they will be used in the script."
+    clipper_audio_mode = st.sidebar.radio(
+        "🔊 Audio for Joined Short",
+        [
+            "Keep Original Video Audio Only (Pure Cut & Join, No Voiceover)",
+            "Add AI Voiceover on Joined Short (Sidhu Paaji Style)",
+        ]
     )
+    add_voiceover_on_short = clipper_audio_mode.startswith("Add AI Voiceover")
 else:
-    auto_fit_audio = False
-    user_story = st.sidebar.text_area(
-        "📖 Paste Your Exact Script (No Video Upload Needed!)",
-        height=180,
-        placeholder="Paste your exact voiceover script here. The AI will speak your script 100% as-is and automatically build a full HD vertical video using free online photos, Wikimedia videos & AI visuals!",
-        help="Your script is spoken verbatim and converted into a full vertical video without needing any video upload or paid keys."
-    )
-    match_context = st.sidebar.text_input(
-        "🔍 Optional Topic / Visual Hint (Helps find exact real photos)",
-        placeholder="e.g. Rohit Sharma, India vs Australia Cricket World Cup",
-    )
+    target_short_duration = 20
+    add_voiceover_on_short = True
 
-# --- 100% FREE HD VISUALS SIDEBAR SETTINGS ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🖼️ Free HD Auto-Visuals (No Key Needed)")
+selected_voice_label = st.sidebar.selectbox(
+    "Voice Model & Language",
+    list(VOICE_OPTIONS.keys()),
+    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
+)
+selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
-if custom_story_mode:
-    enable_broll = True
-    st.sidebar.success("✨ **Direct Script-to-Video Mode:** Automatically fetches real photos/videos from Wikipedia + Wikimedia Commons + Free HD AI visuals with smooth Ken Burns zoom motion.")
-else:
-    enable_broll = st.sidebar.checkbox(
-        "✨ Auto-overlay free online Images/Videos at exact script points",
-        value=True,
-        help="Finds real photos, Wikimedia videos & HD visuals matching specific sentences in your script and overlays them at the exact timestamp."
-    )
-
-free_visual_source = st.sidebar.selectbox(
-    "Free Visual Source Priority",
-    [
-        "Smart Mix (Real Wikipedia/Wikimedia Photos & Videos + Free AI HD Scenes)",
-        "Real Photos & Videos Only (Wikipedia + Wikimedia Commons)",
-        "100% AI Generated HD Vertical Scenes (Free Pollinations Flux)"
-    ],
-    disabled=not enable_broll
+voice_speed = st.sidebar.slider(
+    "⚡ Voice Delivery Speed Multiplier",
+    min_value=0.85,
+    max_value=1.50,
+    value=1.00,
+    step=0.05,
+    help="1.00x is natural synced speed.",
+    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
 )
 
-if not custom_story_mode:
-    broll_display_style = st.sidebar.selectbox(
-        "B-Roll Overlay Style",
-        [
-            "Top-Right Picture-in-Picture Card (Keeps Main Video Visible)",
-            "Top-Center Dynamic Pop-Up Card",
-            "Full-Screen Cutaway (Replaces Frame During Cue)"
-        ],
-        disabled=not enable_broll
-    )
-else:
-    broll_display_style = "Full-Screen Cutaway (Replaces Frame During Cue)"
+auto_fit_audio = st.sidebar.checkbox(
+    "🔄 Auto-fit voice duration to match full video",
+    value=True,
+    help="Stretches or compresses the audio slightly so the voiceover starts at 0s and finishes right as the video ends.",
+    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
+)
+
+match_context = st.sidebar.text_area(
+    "Match / Video Context (Optional)",
+    placeholder="e.g. Focus on sixes, wickets, and celebrations. India vs Pakistan final.",
+    help="Tell the AI what kind of moments you want prioritized or player names for commentary."
+)
 
 
 def cleanup_temp_files():
     patterns = [
         "temp_input.mp4", "generated_voice.mp3", "fitted_voice.wav",
-        "video_with_broll.mp4", "output_hooked.mp4", "broll_item_*",
-        "broll_seg_*", "broll_seg_list.txt"
+        "joined_highlights.mp4", "output_hooked.mp4",
+        "highlight_part_*.mp4", "highlight_list.txt"
     ]
     for pattern in patterns:
         for file in glob.glob(pattern):
@@ -229,18 +206,16 @@ def get_file_duration(file_path: str) -> float:
     return float(res.stdout.strip())
 
 
-def get_video_dimensions(file_path: str) -> tuple[int, int]:
+def has_audio_stream(file_path: str) -> bool:
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "csv=s=x:p=0", file_path
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index", "-of", "csv=p=0", file_path
     ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        w, h = res.stdout.strip().split("x")
-        return int(w), int(h)
+        return bool(res.stdout.strip())
     except Exception:
-        return 720, 1280
+        return False
 
 
 def get_file_state_str(file_obj):
@@ -275,631 +250,385 @@ async def synthesize_voice(text: str, voice: str, output_path: str, rate: str = 
     await communicate.save(output_path)
 
 
-# --- 100% FREE, NO-API-KEY HIGH-QUALITY MEDIA FETCHERS ---
-def download_url_to_file(url: str, dest_path: str, timeout: int = 15) -> bool:
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest_path, "wb") as out:
-            out.write(resp.read())
-        return os.path.exists(dest_path) and os.path.getsize(dest_path) > 2500
-    except Exception:
-        return False
+def parse_timestamp_to_seconds(val) -> float:
+    """Safely converts float, int, 'SS.s', or 'MM:SS' strings to float seconds."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().replace("s", "")
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        if len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+    return float(s)
 
 
-def fetch_wikipedia_page_image(query: str, dest_path: str) -> bool:
-    """Fetches high-res lead article photo directly from English Wikipedia (Great for real players, teams, stadiums, people)."""
-    try:
-        encoded_q = urllib.parse.quote(query)
-        url = (
-            f"https://en.wikipedia.org/w/api.php?action=query&generator=search"
-            f"&gsrsearch={encoded_q}&gsrlimit=3&prop=pageimages"
-            f"&piprop=original|thumbnail&pithumbsize=1280&format=json"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SoulLinesHookGenerator/2.0 (https://streamlit.io)"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        pages = data.get("query", {}).get("pages", {})
-        # Sort by search index so best match comes first
-        sorted_pages = sorted(pages.values(), key=lambda x: x.get("index", 99))
-        for page in sorted_pages:
-            img_url = page.get("original", {}).get("source") or page.get("thumbnail", {}).get("source")
-            if img_url and any(img_url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                if download_url_to_file(img_url, dest_path):
-                    return True
-    except Exception:
-        pass
-    return False
+def extract_best_highlight_moments(client, video_file, video_duration: float, target_total_sec: int, context_hint: str) -> list[dict]:
+    """Watches the video and returns non-overlapping start/end timestamps of the most exciting moments."""
+    # Sampling fps: 2fps for clips <=2 min, 1fps for longer videos
+    sample_fps = 2 if video_duration <= 120 else 1
+    video_part = types.Part(
+        file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
+        video_metadata=types.VideoMetadata(fps=sample_fps),
+    )
 
+    desired_total = min(float(target_short_duration), max(5.0, video_duration * 0.85))
+    num_clips = max(2, min(8, int(round(desired_total / 3.5))))
 
-def fetch_wikimedia_image(query: str, dest_path: str) -> bool:
-    """Free, zero-API-key high-res image search from Wikimedia Commons."""
-    try:
-        encoded_q = urllib.parse.quote(query)
-        url = (
-            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search"
-            f"&gsrsearch=filetype:bitmap%20{encoded_q}&gsrlimit=6&prop=imageinfo"
-            f"&iiprop=url&iiurlwidth=1280&format=json"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SoulLinesHookGenerator/2.0 (https://streamlit.io)"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        pages = data.get("query", {}).get("pages", {})
-        for _, page in pages.items():
-            ii = page.get("imageinfo", [])
-            if ii:
-                img_url = ii[0].get("thumburl") or ii[0].get("url")
-                if img_url and any(img_url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                    if download_url_to_file(img_url, dest_path):
-                        return True
-    except Exception:
-        pass
-    return False
+    prompt = f"""
+    You are an expert viral video and sports highlight editor.
+    Watch this {video_duration:.1f}-second video carefully.
+    Find the {num_clips} MOST INTERESTING, HIGH-IMPACT, EXCITING moments in the video (e.g. peak action, big shots, wickets, goals, celebrations, emotional reactions, crowd roars, or key visual turning points).
+    User hint/focus: {context_hint or "Pick the most exciting peak action moments."}
 
-
-def fetch_wikimedia_video(query: str, dest_path: str) -> bool:
-    """Free, zero-API-key video search from Wikimedia Commons (.webm / .mp4 clips)."""
-    try:
-        encoded_q = urllib.parse.quote(query)
-        url = (
-            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search"
-            f"&gsrsearch=filetype:video%20{encoded_q}&gsrlimit=4&prop=imageinfo"
-            f"&iiprop=url|size&format=json"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SoulLinesHookGenerator/2.0 (https://streamlit.io)"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        pages = data.get("query", {}).get("pages", {})
-        for _, page in pages.items():
-            ii = page.get("imageinfo", [])
-            if ii:
-                vid_url = ii[0].get("url")
-                file_size = int(ii[0].get("size", 0))
-                # Only download reasonably sized clips (<25MB) so processing stays fast
-                if vid_url and 10000 < file_size < 25_000_000 and any(vid_url.lower().endswith(ext) for ext in [".webm", ".mp4", ".ogv"]):
-                    if download_url_to_file(vid_url, dest_path, timeout=18):
-                        return True
-    except Exception:
-        pass
-    return False
-
-
-def fetch_free_ai_hd_image(visual_prompt: str, dest_path: str, seed: int = 42) -> bool:
-    """100% Free, Zero-Key HD 720x1280 Vertical Scene Generator via Pollinations AI."""
-    try:
-        clean_prompt = (
-            f"{visual_prompt}, ultra detailed cinematic sports broadcast photography, "
-            f"dramatic stadium lighting, 8k resolution, photorealistic, vertical reel composition"
-        )
-        encoded_p = urllib.parse.quote(clean_prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=720&height=1280&seed={seed}&nologo=true"
-        return download_url_to_file(url, dest_path, timeout=20)
-    except Exception:
-        return False
-
-
-def extract_broll_cues(client, creative_script: str, total_duration: float, context_hint: str, contiguous: bool = False) -> list[dict]:
-    """Maps exact sentences/phrases of the script to timed English search queries & visual scene prompts."""
-    if contiguous:
-        num_cues = max(3, min(8, int(round(total_duration / 2.5))))
-        timing_rule = (
-            f"Split the entire {total_duration:.2f}s timeline into {num_cues} CONTIGUOUS, BACK-TO-BACK scenes "
-            f"from 0.0 to {total_duration:.2f} with ZERO gaps (scene 1 starts at 0.0, scene 2 starts where scene 1 ends, "
-            f"and the final scene ends at {total_duration:.2f})."
-        )
-    else:
-        num_cues = max(1, min(5, int(total_duration // 3.0)))
-        timing_rule = (
-            f"Identify {num_cues} key visual moments spread across the {total_duration:.1f}s timeline. "
-            f"Ensure timestamps do NOT overlap and each cue lasts 2.0 to 3.5 seconds."
-        )
-
-    cue_prompt = f"""
-    You are a video director syncing online B-roll visuals to the exact points of a voiceover script.
-    The total audio/video duration is {total_duration:.2f} seconds.
-    Exact Voiceover Script: "{creative_script}"
-    Additional Context: "{context_hint or 'none'}"
-
-    {timing_rule}
-
-    Return ONLY a raw JSON list of objects with these exact keys:
+    CRITICAL RULES:
+    1. Every timestamp MUST be strictly between 0.0 and {video_duration:.1f} seconds (in float seconds, e.g. 4.5, 18.2).
+    2. Each individual clip should be between 2.0 and 6.0 seconds long.
+    3. The sum of all clip durations should be approximately {desired_total:.1f} seconds.
+    4. Keep clips in chronological order (`start` < `end`, and non-overlapping).
+    5. Return ONLY a raw JSON list of objects with these exact keys:
     [
       {{
-        "start": 0.0,
-        "end": 2.8,
-        "wiki_entity": "exact Wikipedia article title for the real person, team, stadium, or trophy mentioned in this line (e.g. 'Rohit Sharma', 'India national cricket team', 'Wankhede Stadium')",
-        "query": "specific English search query for Wikimedia Commons (e.g. 'Rohit Sharma batting', 'cricket stadium cheering')",
-        "ai_scene_prompt": "vivid English visual description of this exact moment in the script for generating an HD scene (e.g. 'Indian cricketer hitting a massive six in a packed floodlit stadium, crowd roaring with Indian flags')",
-        "script_phrase": "the exact phrase from the script being spoken at this moment"
+        "start": 3.5,
+        "end": 7.0,
+        "reason": "Brief description of what exciting thing happens in this clip"
       }}
     ]
-    Output ONLY valid JSON, no markdown fences, no commentary.
+    Output ONLY valid JSON, no markdown fences, no extra text.
     """
+
     try:
         resp = generate_content_with_retry(
             client,
             model="gemini-3.6-flash",
-            contents=[cue_prompt],
+            contents=[video_part, prompt],
             config=types.GenerateContentConfig(temperature=0.2)
         )
-        raw_text = (resp.text or "").strip()
-        if raw_text.startswith("```"):
-            raw_text = raw_text.strip("`")
-            if raw_text.lower().startswith("json"):
-                raw_text = raw_text[4:].strip()
-        cues = json.loads(raw_text)
-        if not cues:
-            return []
+        raw = (resp.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        items = json.loads(raw)
 
-        if contiguous:
-            valid_cues = []
-            cur_start = 0.0
-            n = len(cues)
-            for i, c in enumerate(cues):
-                if i == n - 1:
-                    end_t = round(total_duration, 2)
-                else:
-                    raw_end = float(c.get("end", cur_start + (total_duration / n)))
-                    end_t = round(max(cur_start + 1.0, min(total_duration - 0.5, raw_end)), 2)
-                if end_t > cur_start:
-                    valid_cues.append({
-                        "start": round(cur_start, 2),
-                        "end": end_t,
-                        "wiki_entity": str(c.get("wiki_entity", "")).strip(),
-                        "query": str(c.get("query", "cricket stadium")).strip(),
-                        "ai_scene_prompt": str(c.get("ai_scene_prompt", "cricket match stadium action")).strip(),
-                        "script_phrase": str(c.get("script_phrase", "")).strip()
-                    })
-                    cur_start = end_t
-            return valid_cues
-        else:
-            valid_cues = []
-            last_end = 0.2
-            for c in cues:
-                st_t = max(last_end, float(c.get("start", 0.5)))
-                end_t = min(total_duration - 0.2, float(c.get("end", st_t + 2.5)))
-                if end_t - st_t >= 1.2:
-                    valid_cues.append({
-                        "start": round(st_t, 2),
-                        "end": round(end_t, 2),
-                        "wiki_entity": str(c.get("wiki_entity", "")).strip(),
-                        "query": str(c.get("query", "cricket stadium")).strip(),
-                        "ai_scene_prompt": str(c.get("ai_scene_prompt", "cricket match stadium action")).strip(),
-                        "script_phrase": str(c.get("script_phrase", "")).strip()
-                    })
-                    last_end = end_t + 0.3
-            return valid_cues
+        # Clean, sort, and de-overlap clips
+        cleaned = []
+        for item in items:
+            st_t = max(0.0, parse_timestamp_to_seconds(item.get("start", 0.0)))
+            end_t = min(video_duration, parse_timestamp_to_seconds(item.get("end", st_t + 3.0)))
+            if end_t - st_t >= 1.2:
+                cleaned.append({
+                    "start": round(st_t, 2),
+                    "end": round(end_t, 2),
+                    "reason": str(item.get("reason", "Highlight moment")).strip()
+                })
+
+        cleaned.sort(key=lambda x: x["start"])
+        merged = []
+        last_end = 0.0
+        running_dur = 0.0
+        for c in cleaned:
+            st_t = max(c["start"], last_end)
+            end_t = c["end"]
+            if end_t - st_t >= 1.2:
+                if running_dur + (end_t - st_t) > desired_total + 4.0 and len(merged) >= 2:
+                    break
+                merged.append({
+                    "start": round(st_t, 2),
+                    "end": round(end_t, 2),
+                    "reason": c["reason"]
+                })
+                last_end = end_t
+                running_dur += (end_t - st_t)
+
+        if merged:
+            return merged
     except Exception:
-        if contiguous:
-            return [{
-                "start": 0.0,
-                "end": round(total_duration, 2),
-                "wiki_entity": context_hint.strip() or "India national cricket team",
-                "query": context_hint.strip() or "cricket stadium crowd",
-                "ai_scene_prompt": f"Dramatic scene of {context_hint.strip() or 'cricket match in packed stadium'}",
-                "script_phrase": creative_script[:60]
-            }]
-        return []
+        pass
+
+    # Fallback if parsing fails: pick Beginning, Middle, and Climax segments
+    seg = min(4.0, video_duration / 3.0)
+    return [
+        {"start": 0.0, "end": round(seg, 2), "reason": "Opening highlight"},
+        {"start": round(video_duration * 0.45, 2), "end": round(video_duration * 0.45 + seg, 2), "reason": "Mid-video peak action"},
+        {"start": round(max(0.0, video_duration - seg), 2), "end": round(video_duration, 2), "reason": "Climax moment"},
+    ]
 
 
-def fetch_free_media_for_cues(cues: list[dict], source_pref: str) -> list[dict]:
-    """Fetches high-resolution visuals using 100% free methods (Wikipedia API, Wikimedia Video/Image API, and Pollinations AI HD)."""
-    downloaded = []
-    for idx, cue in enumerate(cues):
-        wiki_ent = cue.get("wiki_entity", "")
-        q = cue.get("query", "")
-        ai_prompt = cue.get("ai_scene_prompt", q)
-        found_path = None
-        found_type = None
-        source_label = ""
+def cut_and_join_highlights_ffmpeg(input_video: str, moments: list[dict], output_joined: str) -> bool:
+    """Cuts each highlight segment cleanly and stitches them into a single seamless MP4 Short (zero captions)."""
+    if not moments:
+        return False
 
-        # Option A: Pure AI HD Scenes
-        if source_pref.startswith("100% AI"):
-            img_candidate = f"broll_item_{idx}.jpg"
-            if fetch_free_ai_hd_image(ai_prompt, img_candidate, seed=100 + idx):
-                found_path = img_candidate
-                found_type = "image"
-                source_label = "Free AI HD Scene"
+    input_has_audio = has_audio_stream(input_video)
+    part_files = []
 
-        # Option B: Smart Mix or Real Photos/Videos First
-        if not found_path:
-            # 1. Try Wikimedia Commons Video clip first
-            vid_candidate = f"broll_item_{idx}.webm"
-            if q and fetch_wikimedia_video(q, vid_candidate):
-                found_path = vid_candidate
-                found_type = "video"
-                source_label = f"Wikimedia Video ({q})"
+    for idx, m in enumerate(moments):
+        st_t = m["start"]
+        dur = round(m["end"] - m["start"], 2)
+        if dur <= 0.5:
+            continue
+        part_path = f"highlight_part_{idx}.mp4"
 
-        if not found_path:
-            # 2. Try Wikipedia High-Res Lead Image for the exact person/team/entity
-            img_candidate = f"broll_item_{idx}.jpg"
-            if wiki_ent and fetch_wikipedia_page_image(wiki_ent, img_candidate):
-                found_path = img_candidate
-                found_type = "image"
-                source_label = f"Wikipedia HD ({wiki_ent})"
-            elif q and fetch_wikimedia_image(q, img_candidate):
-                found_path = img_candidate
-                found_type = "image"
-                source_label = f"Wikimedia Commons HD ({q})"
-            elif q and fetch_wikipedia_page_image(q, img_candidate):
-                found_path = img_candidate
-                found_type = "image"
-                source_label = f"Wikipedia HD ({q})"
-
-        # 3. Automatic HD AI Scene Fallback so NO scene is ever missing or blank!
-        if not found_path:
-            img_candidate = f"broll_item_{idx}.jpg"
-            if fetch_free_ai_hd_image(ai_prompt, img_candidate, seed=200 + idx):
-                found_path = img_candidate
-                found_type = "image"
-                source_label = "Free AI HD Scene"
-
-        if found_path and found_type:
-            downloaded.append({
-                "path": found_path,
-                "type": found_type,
-                "start": cue["start"],
-                "end": cue["end"],
-                "query": q or wiki_ent,
-                "phrase": cue["script_phrase"]
-            })
-            st.write(f"  ✔️ **[{cue['start']}s – {cue['end']}s]** Added **{source_label}** for *\"{cue['script_phrase']}\"*")
-        else:
-            st.write(f"  ⚠️ Could not fetch visual for `{q}`.")
-    return downloaded
-
-
-def build_standalone_video_from_brolls(downloaded_brolls: list[dict], total_duration: float, output_path: str) -> bool:
-    """Builds a 720x1280 vertical MP4 video with smooth Ken Burns dynamic zoom/pan motion on every image."""
-    target_w, target_h = 720, 1280
-    fps = 30
-
-    if not downloaded_brolls:
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi",
-            "-i", f"color=c=0x12161f:s={target_w}x{target_h}:r={fps}:d={total_duration}",
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            output_path
-        ], capture_output=True, check=True)
-        return os.path.exists(output_path)
-
-    segment_files = []
-    n = len(downloaded_brolls)
-    cur_t = 0.0
-
-    for idx, item in enumerate(downloaded_brolls):
-        if idx == n - 1:
-            seg_dur = max(0.8, round(total_duration - cur_t, 2))
-        else:
-            planned_dur = item["end"] - item["start"]
-            seg_dur = max(1.0, round(planned_dur, 2))
-            if cur_t + seg_dur > total_duration - 0.5:
-                seg_dur = max(0.8, round((total_duration - cur_t) / (n - idx), 2))
-        cur_t += seg_dur
-
-        seg_path = f"broll_seg_{idx}.mp4"
-        frames = max(24, int(round(seg_dur * fps)))
-
-        if item["type"] == "image":
-            # Alternate smooth Ken Burns zoom-in and zoom-out across scenes for broadcast documentary feel
-            if idx % 2 == 0:
-                zoom_expr = "min(zoom+0.0018,1.22)"
-            else:
-                zoom_expr = "if(eq(on,1),1.20,max(1.0,zoom-0.0018))"
-
-            vf_chain = (
-                f"scale=1440:2560:force_original_aspect_ratio=increase,"
-                f"crop=1440:2560,"
-                f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={target_w}x{target_h}:fps={fps},"
-                f"setsar=1,format=yuv420p"
-            )
+        if input_has_audio:
             cmd = [
-                "ffmpeg", "-y", "-i", item["path"],
-                "-vf", vf_chain,
-                "-t", str(seg_dur),
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-                "-an", seg_path
+                "ffmpeg", "-y",
+                "-ss", str(st_t),
+                "-t", str(dur),
+                "-i", input_video,
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                part_path
             ]
         else:
-            vf_chain = (
-                f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
-                f"crop={target_w}:{target_h},setsar=1,fps={fps},format=yuv420p"
-            )
             cmd = [
-                "ffmpeg", "-y", "-stream_loop", "-1", "-t", str(seg_dur),
-                "-i", item["path"],
-                "-vf", vf_chain,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-                "-an", seg_path
+                "ffmpeg", "-y",
+                "-ss", str(st_t),
+                "-t", str(dur),
+                "-i", input_video,
+                "-f", "lavfi", "-t", str(dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                "-shortest",
+                part_path
             ]
 
-        try:
-            subprocess.run(cmd, capture_output=True, check=True)
-            if os.path.exists(seg_path):
-                segment_files.append(seg_path)
-        except Exception:
-            # Fallback simple scale if zoompan fails on an unusual image format
-            fallback_vf = f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h},setsar=1,fps={fps},format=yuv420p"
-            try:
-                subprocess.run([
-                    "ffmpeg", "-y", "-loop", "1", "-t", str(seg_dur),
-                    "-i", item["path"], "-vf", fallback_vf,
-                    "-c:v", "libx264", "-preset", "veryfast", "-an", seg_path
-                ], capture_output=True, check=True)
-                if os.path.exists(seg_path):
-                    segment_files.append(seg_path)
-            except Exception:
-                pass
-
-    if not segment_files:
-        return False
-
-    concat_list_path = "broll_seg_list.txt"
-    with open(concat_list_path, "w", encoding="utf-8") as f:
-        for seg in segment_files:
-            f.write(f"file '{seg}'\n")
-
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", concat_list_path,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-pix_fmt", "yuv420p",
-            output_path
-        ], capture_output=True, check=True)
-        return os.path.exists(output_path)
-    except Exception:
-        return False
-
-
-def apply_broll_overlays_ffmpeg(base_video: str, downloaded_brolls: list[dict], output_path: str, display_style: str) -> bool:
-    """Uses FFmpeg filter_complex to overlay multiple timed images/videos onto an uploaded video."""
-    if not downloaded_brolls:
-        return False
-
-    vid_w, vid_h = get_video_dimensions(base_video)
-    base_dur = get_file_duration(base_video)
-    cmd = ["ffmpeg", "-y", "-i", base_video]
-
-    for item in downloaded_brolls:
-        if item["type"] == "image":
-            cmd.extend(["-loop", "1", "-t", str(base_dur), "-i", item["path"]])
-        else:
-            cmd.extend(["-stream_loop", "-1", "-t", str(base_dur), "-i", item["path"]])
-
-    filter_parts = []
-    last_label = "0:v"
-
-    for idx, item in enumerate(downloaded_brolls, start=1):
-        st_t = item["start"]
-        end_t = item["end"]
-        b_label = f"broll{idx}"
-        out_label = f"vout{idx}"
-
-        if display_style.startswith("Full-Screen"):
-            target_w, target_h = vid_w, vid_h
-            pos_expr = "0:0"
-            box_filter = (
-                f"[{idx}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
-                f"crop={target_w}:{target_h},setsar=1[{b_label}]"
-            )
-        elif display_style.startswith("Top-Center"):
-            target_w = int(vid_w * 0.72)
-            target_h = int(vid_h * 0.32)
-            target_w -= target_w % 2
-            target_h -= target_h % 2
-            pos_expr = f"(W-w)/2:{int(vid_h * 0.08)}"
-            box_filter = (
-                f"[{idx}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
-                f"crop={target_w}:{target_h},"
-                f"drawbox=x=0:y=0:w=iw:h=ih:color=white@0.9:t=6,setsar=1[{b_label}]"
-            )
-        else:
-            target_w = int(vid_w * 0.44)
-            target_h = int(vid_h * 0.28)
-            target_w -= target_w % 2
-            target_h -= target_h % 2
-            pos_expr = f"W-w-{int(vid_w * 0.04)}:{int(vid_h * 0.06)}"
-            box_filter = (
-                f"[{idx}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
-                f"crop={target_w}:{target_h},"
-                f"drawbox=x=0:y=0:w=iw:h=ih:color=white@0.9:t=5,setsar=1[{b_label}]"
-            )
-
-        filter_parts.append(box_filter)
-        overlay_filter = (
-            f"[{last_label}][{b_label}]overlay={pos_expr}:enable='between(t,{st_t},{end_t})':eof_action=pass[{out_label}]"
-        )
-        filter_parts.append(overlay_filter)
-        last_label = out_label
-
-    filter_complex_str = ";".join(filter_parts)
-    cmd.extend([
-        "-filter_complex", filter_complex_str,
-        "-map", f"[{last_label}]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-        "-pix_fmt", "yuv420p",
-        "-an",
-        output_path
-    ])
-
-    try:
         subprocess.run(cmd, capture_output=True, check=True)
-        return os.path.exists(output_path)
-    except Exception:
+        if os.path.exists(part_path):
+            part_files.append(part_path)
+
+    if not part_files:
         return False
+
+    list_path = "highlight_list.txt"
+    with open(list_path, "w", encoding="utf-8") as f:
+        for p in part_files:
+            f.write(f"file '{p}'\n")
+
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", list_path,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000", "-ac", "2",
+        output_joined
+    ], capture_output=True, check=True)
+
+    return os.path.exists(output_joined)
 
 
 # --- MAIN PAGE EXECUTION ---
-temp_video = "temp_input.mp4"
-script_audio = "generated_voice.mp3"
-fitted_audio = "fitted_voice.wav"
-video_with_broll = "video_with_broll.mp4"
-output_video = "output_hooked.mp4"
+uploaded_file = st.file_uploader("Upload MP4 Video File", type=["mp4"])
 
-# MODE A: DIRECT SCRIPT-TO-VIDEO (NO VIDEO UPLOAD, NO PEXELS KEY NEEDED)
-if custom_story_mode:
-    st.info(
-        "🎬 **Direct Script-to-Video Mode (100% Free HD Visuals):** No video upload needed! "
-        "Paste your script in the sidebar and click the button below. The app speaks your exact script as-is "
-        "and builds a full vertical video with dynamic zoom motion using Wikipedia HD photos, Wikimedia videos, and Free AI scenes."
+if uploaded_file is not None:
+    temp_video = "temp_input.mp4"
+    script_audio = "generated_voice.mp3"
+    fitted_audio = "fitted_voice.wav"
+    joined_highlights = "joined_highlights.mp4"
+    output_video = "output_hooked.mp4"
+
+    with open(temp_video, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    st.video(temp_video)
+
+    btn_label = (
+        "✂️ Find Best Moments, Cut & Join into 1 Short"
+        if highlight_clipper_mode
+        else "🚀 Analyze Video & Overlay Viral Hook"
     )
 
-    if st.button("🚀 Generate Full HD Video Directly from Script"):
+    if st.button(btn_label):
         api_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
         if not api_key:
             st.error("Please enter your Gemini API Key in the sidebar.")
             st.stop()
         if not api_key.isascii() or len(api_key) > 100 or any(c.isspace() for c in api_key):
-            st.error("The Gemini API key looks invalid. Please paste only the ~39-character key starting with 'AIza'.")
-            st.stop()
-        if not user_story.strip():
-            st.error("Please paste your script in the sidebar 'Paste Your Exact Script' box first.")
+            st.error(
+                f"The Gemini API key looks wrong: {len(api_key)} characters, "
+                f"{'contains non-English characters' if not api_key.isascii() else 'unexpected length/spaces'}. "
+                "A real key is ~39 characters starting with 'AIza'. Clear the sidebar field "
+                "(and check the GEMINI_API_KEY environment variable) and paste only the key from Google AI Studio."
+            )
             st.stop()
 
         cleanup_temp_files()
+        with open(temp_video, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
         client = genai.Client(api_key=api_key)
 
-        with st.status("Generating Voiceover & Building HD Video from Free Online Media...", expanded=True) as status:
-            creative_script = user_story.strip()
-            target_lang = selected_voice_info["lang"]
-            st.markdown(f"**Exact Script Used ({target_lang}):**\n> {creative_script}")
+        # =========================================================================
+        # MODE 1: AUTO HIGHLIGHT CLIPPER (FIND BEST MOMENTS, CUT & JOIN INTO 1 SHORT)
+        # =========================================================================
+        if highlight_clipper_mode:
+            with st.status("Scanning Video for Most Interesting Moments & Joining into 1 Short...", expanded=True) as status:
+                orig_duration = get_file_duration(temp_video)
+                st.write(f"⏱️ Original Video Duration: **{orig_duration:.2f} seconds**")
 
-            # 1. Generate Voiceover First
-            if selected_voice_info["engine"] == "gemini":
-                st.write(f"🎙️ Generating AI voiceover using Gemini ({selected_voice_info['code']})...")
+                st.write("📹 Uploading video to Gemini to detect peak action & highlight timestamps...")
                 try:
-                    audio_response = generate_content_with_retry(
+                    video_file = client.files.upload(file=temp_video)
+                except Exception as e:
+                    st.error(f"Authentication or Upload Error: {e}")
+                    st.stop()
+
+                while get_file_state_str(video_file) in ["PROCESSING", "PENDING"]:
+                    time.sleep(2)
+                    video_file = client.files.get(name=video_file.name)
+
+                if get_file_state_str(video_file) != "ACTIVE":
+                    st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
+                    st.stop()
+
+                st.write(f"🔎 Identifying the best moments (Target Short length: ~**{target_short_duration}s**)...")
+                moments = extract_best_highlight_moments(
+                    client, video_file, orig_duration, target_short_duration, match_context
+                )
+
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
+
+                st.write(f"✂️ Found **{len(moments)}** highlight moments! Cutting & joining clips via FFmpeg (No captions):")
+                for i, m in enumerate(moments, start=1):
+                    clip_len = m["end"] - m["start"]
+                    st.write(f"  • **Clip {i} [{m['start']}s – {m['end']}s]** ({clip_len:.1f}s): {m['reason']}")
+
+                if not cut_and_join_highlights_ffmpeg(temp_video, moments, joined_highlights):
+                    st.error("Failed to cut and join highlight segments.")
+                    st.stop()
+
+                short_duration = get_file_duration(joined_highlights)
+                st.write(f"✅ Joined Highlight Short Duration: **{short_duration:.2f} seconds**")
+
+                # Option A: Pure Cut & Join (Keep Original Video Audio, No Voiceover, No Captions)
+                if not add_voiceover_on_short:
+                    os.replace(joined_highlights, output_video)
+                    status.update(label="✨ Best Moments Cut & Joined into 1 Short Successfully!", state="complete", expanded=False)
+
+                # Option B: Overlay AI Voiceover on the newly joined Highlight Short
+                else:
+                    target_lang = selected_voice_info["lang"]
+                    script_type = selected_voice_info["script_type"]
+                    target_words = max(10, int(short_duration * 2.4 * voice_speed))
+
+                    st.write(f"🤖 Writing Sidhu Paaji commentary synced to your new {short_duration:.1f}s Highlight Short...")
+                    moments_summary = "\n".join(
+                        f"- Clip {i+1} ({m['end'] - m['start']:.1f}s): {m['reason']}"
+                        for i, m in enumerate(moments)
+                    )
+                    style_guide = get_sidhu_style_guide(lang_note=script_type)
+                    phrase_rule = "FOR THIS SHORT, build the script around these phrases (use at least 3): " + " | ".join(random.sample(CORE_PHRASES, 4))
+
+                    prompt = f"""
+                    You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live commentary.
+                    Below is the exact sequence of highlight clips joined into a {short_duration:.1f}-second Short:
+                    {moments_summary}
+
+                    USER CONTEXT: {match_context or "none provided"}
+                    {style_guide}
+                    {phrase_rule}
+
+                    CRITICAL LANGUAGE & TIMING CONSTRAINTS:
+                    1. Write the ENTIRE script natively in {target_lang} using standard {script_type}.
+                    2. Write approximately **{target_words} words** so it covers the {short_duration:.1f}s Short at 1x speed.
+                    3. Output ONLY the plain script text. No markdown, no timestamps, no labels.
+                    """
+                    resp = generate_content_with_retry(
                         client,
-                        model="gemini-3.8-flash-tts",
-                        contents=[creative_script],
-                        config=types.GenerateContentConfig(
-                            response_modalities=["AUDIO"],
-                            speech_config=types.SpeechConfig(
-                                voice_config=types.VoiceConfig(
-                                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                        voice_name=selected_voice_info["code"]
+                        model="gemini-3.6-flash",
+                        contents=[prompt],
+                        config=types.GenerateContentConfig(temperature=1.1, top_p=0.95)
+                    )
+                    creative_script = (resp.text or "").strip()
+                    st.markdown(f"**Generated Highlight Voiceover ({target_lang}):**\n> {creative_script}")
+
+                    if selected_voice_info["engine"] == "gemini":
+                        audio_response = generate_content_with_retry(
+                            client,
+                            model="gemini-3.8-flash-tts",
+                            contents=[creative_script],
+                            config=types.GenerateContentConfig(
+                                response_modalities=["AUDIO"],
+                                speech_config=types.SpeechConfig(
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name=selected_voice_info["code"]
+                                        )
                                     )
                                 )
                             )
                         )
+                        audio_bytes = None
+                        if audio_response.candidates and audio_response.candidates[0].content.parts:
+                            for part in audio_response.candidates[0].content.parts:
+                                if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
+                                    audio_bytes = part.inline_data.data
+                                    break
+                        if audio_bytes:
+                            with open(script_audio, "wb") as f:
+                                f.write(audio_bytes)
+                        else:
+                            st.error("Gemini failed to return audio data.")
+                            st.stop()
+                    else:
+                        asyncio.run(synthesize_voice(
+                            text=creative_script,
+                            voice=selected_voice_info["code"],
+                            output_path=script_audio,
+                            rate=selected_voice_info.get("rate", "+0%"),
+                            pitch=selected_voice_info.get("pitch", "+15Hz")
+                        ))
+
+                    audio_duration = get_file_duration(script_audio)
+                    if auto_fit_audio:
+                        final_tempo = max(0.85, min(audio_duration / short_duration, 1.35))
+                    else:
+                        final_tempo = voice_speed
+
+                    audio_filter = (
+                        f"atempo={final_tempo},"
+                        f"loudnorm=I=-14.0:TP=-1.5:LRA=11,"
+                        f"apad=whole_dur={short_duration}"
                     )
-                except Exception as err:
-                    st.error(f"Gemini Audio Generation Error: {err}")
-                    st.stop()
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", script_audio,
+                        "-filter:a", audio_filter,
+                        "-t", str(short_duration),
+                        "-ar", "48000", "-ac", "2",
+                        fitted_audio
+                    ], capture_output=True, check=True)
 
-                audio_bytes = None
-                if audio_response.candidates and audio_response.candidates[0].content.parts:
-                    for part in audio_response.candidates[0].content.parts:
-                        if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
-                            audio_bytes = part.inline_data.data
-                            break
+                    subprocess.run([
+                        "ffmpeg", "-y",
+                        "-i", joined_highlights,
+                        "-i", fitted_audio,
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-ar", "48000", "-ac", "2",
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-t", str(short_duration),
+                        output_video
+                    ], check=True)
 
-                if audio_bytes:
-                    with open(script_audio, "wb") as f:
-                        f.write(audio_bytes)
-                else:
-                    st.error("Gemini failed to return audio data. Please check your API key.")
-                    st.stop()
-            else:
-                rate_str = selected_voice_info.get("rate", "+0%")
-                pitch_str = selected_voice_info.get("pitch", "+15Hz")
-                st.write(f"🎙️ Synthesizing voiceover via Edge-TTS ({selected_voice_info['code']})...")
-                asyncio.run(synthesize_voice(
-                    text=creative_script,
-                    voice=selected_voice_info["code"],
-                    output_path=script_audio,
-                    rate=rate_str,
-                    pitch=pitch_str
-                ))
+                    status.update(label="✨ Best Moments Joined & Voiceover Overlaid!", state="complete", expanded=False)
 
-            # 2. Apply user speed multiplier & normalize to -14.0 LUFS
-            final_tempo = voice_speed
-            audio_filter = f"atempo={final_tempo},loudnorm=I=-14.0:TP=-1.5:LRA=11"
+            st.subheader("🔥 Final Joined Highlight Short")
+            st.video(output_video)
+            with open(output_video, "rb") as f_dl:
+                st.download_button("⬇️ Download Joined Highlight Short (MP4)", data=f_dl, file_name="highlight_short.mp4", mime="video/mp4")
 
-            subprocess.run([
-                "ffmpeg", "-y", "-i", script_audio,
-                "-filter:a", audio_filter,
-                "-ar", "48000", "-ac", "2",
-                fitted_audio
-            ], capture_output=True, check=True)
-
-            total_duration = get_file_duration(fitted_audio)
-            st.write(f"⏱️ Final Voiceover Duration: **{total_duration:.2f} seconds** (Speed: {final_tempo:.2f}x)")
-
-            # 3. Extract contiguous scene cues & fetch free HD images/videos
-            st.write("🌐 Mapping script lines to visual scenes & downloading free HD photos/videos...")
-            cues = extract_broll_cues(client, creative_script, total_duration, match_context, contiguous=True)
-            downloaded_brolls = fetch_free_media_for_cues(cues, free_visual_source)
-
-            # 4. Assemble standalone vertical video with Ken Burns zoom motion
-            st.write("🎞️ Rendering 720x1280 HD vertical scenes with smooth Ken Burns zoom motion...")
-            if not build_standalone_video_from_brolls(downloaded_brolls, total_duration, video_with_broll):
-                st.error("Failed to assemble video from online media.")
-                st.stop()
-
-            # 5. Mux voiceover audio with assembled video
-            st.write("🎬 Muxing voiceover into final HD video via FFmpeg...")
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", video_with_broll,
-                "-i", fitted_audio,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-ar", "48000",
-                "-ac", "2",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-t", str(total_duration),
-                output_video
-            ], check=True)
-
-            status.update(label="✨ Full HD Video Automatically Built from Your Script!", state="complete", expanded=False)
-
-        st.subheader("🔥 Final Video Output")
-        st.video(output_video)
-        with open(output_video, "rb") as f_dl:
-            st.download_button("⬇️ Download Final HD Video (MP4)", data=f_dl, file_name="auto_script_video.mp4", mime="video/mp4")
-
-# MODE B: UPLOAD VIDEO MODES (Sidhu Paaji, Soul Lines, Viral Hook Modes)
-else:
-    uploaded_file = st.file_uploader("Upload MP4 Video File", type=["mp4"])
-
-    if uploaded_file is not None:
-        with open(temp_video, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        st.video(temp_video)
-
-        if st.button("🚀 Analyze Video & Overlay Viral Hook"):
-            api_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
-            if not api_key:
-                st.error("Please enter your Gemini API Key in the sidebar.")
-                st.stop()
-            if not api_key.isascii() or len(api_key) > 100 or any(c.isspace() for c in api_key):
-                st.error("The Gemini API key looks invalid. Please paste only the ~39-character key starting with 'AIza'.")
-                st.stop()
-
-            cleanup_temp_files()
-            with open(temp_video, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-
-            client = genai.Client(api_key=api_key)
-
-            with st.status("Analyzing Video & Building Synced Audio + Free B-Roll Overlay...", expanded=True) as status:
+        # =========================================================================
+        # MODE 2: STANDARD FULL-VIDEO VOICEOVER MODES (SIDHU PAAJI, SOUL LINES, ETC.)
+        # =========================================================================
+        else:
+            with st.status("Analyzing Video & Building Synced Audio Overlay...", expanded=True) as status:
 
                 # 1. Video Duration
                 video_duration = get_file_duration(temp_video)
@@ -922,11 +651,11 @@ else:
                     st.stop()
 
                 # 3. Multimodal Analysis using Gemini 3.6 Flash
-                target_lang = selected_voice_info["lang"]
-                script_type = selected_voice_info["script_type"]
-                st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a structured **{script_style}** script in **{target_lang}**...")
+                st.write(f"🤖 Gemini 3.6 Flash is analyzing video & writing a structured **{script_style}** script in **{selected_voice_info['lang']}**...")
 
                 sidhu_mode = script_style.startswith("Sidhu Paaji")
+                target_lang = selected_voice_info["lang"]
+                script_type = selected_voice_info["script_type"]
                 target_words = max(12, int(video_duration * 2.4 * voice_speed))
 
                 if script_style == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
@@ -985,7 +714,7 @@ else:
                 with st.expander("🔎 What the AI saw in your video"):
                     st.text(visual_log)
 
-                # 3b. PASS 2 - write the script
+                # 3b. PASS 2 - write a fresh script from the log + context
                 used = st.session_state.setdefault("used_scripts", [])
                 if sidhu_mode:
                     persona = "You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live cricket commentary."
@@ -1123,23 +852,11 @@ else:
                     fitted_audio
                 ], capture_output=True, check=True)
 
-                # 5b. Automated Free Online B-Roll Search & Timed Video Overlay
-                video_source_for_mux = temp_video
-                if enable_broll:
-                    st.write("🌐 Finding free HD online B-roll images/videos synced to exact points in your script...")
-                    cues = extract_broll_cues(client, creative_script, video_duration, match_context, contiguous=False)
-                    downloaded_brolls = fetch_free_media_for_cues(cues, free_visual_source)
-
-                    if downloaded_brolls:
-                        st.write("🖼️ Overlaying fetched HD visuals at exact script timestamps via FFmpeg...")
-                        if apply_broll_overlays_ffmpeg(temp_video, downloaded_brolls, video_with_broll, broll_display_style):
-                            video_source_for_mux = video_with_broll
-
                 # 6. Mux Final Audio/Video (Full Video Preserved)
-                st.write("🎬 Muxing synced audio into final video via FFmpeg...")
+                st.write("🎬 Muxing synced audio into full video via FFmpeg...")
                 subprocess.run([
                     "ffmpeg", "-y",
-                    "-i", video_source_for_mux,
+                    "-i", temp_video,
                     "-i", fitted_audio,
                     "-c:v", "copy",
                     "-c:a", "aac",
@@ -1151,9 +868,9 @@ else:
                     output_video
                 ], check=True)
 
-                status.update(label="✨ Script, Voiceover & Free HD B-Roll Successfully Overlaid!", state="complete", expanded=False)
+                status.update(label="✨ Hook Successfully Overlaid (100% Video Preserved)!", state="complete", expanded=False)
 
             st.subheader("🔥 Final Video Output")
             st.video(output_video)
             with open(output_video, "rb") as f_dl:
-                st.download_button("⬇️ Download Final HD Video (MP4)", data=f_dl, file_name="hooked_video.mp4", mime="video/mp4")
+                st.download_button("⬇️ Download Hooked Video (MP4)", data=f_dl, file_name="hooked_video.mp4", mime="video/mp4")
