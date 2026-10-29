@@ -78,8 +78,8 @@ STRUCTURE TEMPLATES ONLY ({lang_note}) — brackets are placeholders. NEVER copy
 RULES: {RULES}
 """
 
-st.set_page_config(page_title="Multimodal Video Hook & Highlight Clipper", layout="wide")
-st.title("🎬 Direct Multimodal Video Hook & Auto Highlight Short Maker")
+st.set_page_config(page_title="Multimodal Video Hook & Multi-Shorts Extractor", layout="wide")
+st.title("🎬 Direct Multimodal Video Hook & Multi-Shorts Extractor")
 
 # Sidebar Configuration
 st.sidebar.header("Settings")
@@ -116,7 +116,7 @@ VOICE_OPTIONS = {
 script_style = st.sidebar.selectbox(
     "Mode / Script Style",
     [
-        "Auto Highlight Clipper (Cut & Join Best Moments into 1 Short)",
+        "Auto Multi-Shorts Extractor (Generate 3+ Separate Shorts)",
         "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
         "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
         "High-Dopamine Viral Opening",
@@ -127,35 +127,50 @@ script_style = st.sidebar.selectbox(
     ]
 )
 
-highlight_clipper_mode = (script_style == "Auto Highlight Clipper (Cut & Join Best Moments into 1 Short)")
+multi_shorts_mode = (script_style == "Auto Multi-Shorts Extractor (Generate 3+ Separate Shorts)")
 
-if highlight_clipper_mode:
+if multi_shorts_mode:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("✂️ Highlight Clipper Settings")
-    target_short_duration = st.sidebar.slider(
-        "🎯 Target Joined Short Length (seconds)",
-        min_value=10,
-        max_value=60,
-        value=20,
-        step=5,
-        help="Total length of all exciting moments combined into one single Short."
+    st.sidebar.subheader("📱 Multi-Shorts Extractor Settings")
+    num_shorts_to_make = st.sidebar.slider(
+        "🔢 Number of Separate Shorts to Generate",
+        min_value=3,
+        max_value=6,
+        value=3,
+        step=1,
+        help="Finds at least 3 distinct exciting moments and saves each one as a separate Short video."
     )
-    clipper_audio_mode = st.sidebar.radio(
-        "🔊 Audio for Joined Short",
+    each_short_duration = st.sidebar.slider(
+        "⏱️ Duration of Each Short (seconds)",
+        min_value=6,
+        max_value=30,
+        value=12,
+        step=2,
+        help="Target length for each individual extracted Short."
+    )
+    convert_vertical_916 = st.sidebar.checkbox(
+        "📐 Auto-convert each Short to 9:16 Vertical (720x1280)",
+        value=True,
+        help="Crops/scales horizontal videos into 9:16 vertical format for YouTube Shorts & Instagram Reels."
+    )
+    shorts_audio_mode = st.sidebar.radio(
+        "🔊 Audio for Each Generated Short",
         [
-            "Keep Original Video Audio Only (Pure Cut & Join, No Voiceover)",
-            "Add AI Voiceover on Joined Short (Sidhu Paaji Style)",
+            "Keep Original Video Audio Only (Pure Extracted Shorts, No Captions)",
+            "Overlay AI Voiceover on Each Short (Sidhu Paaji Style)",
         ]
     )
-    add_voiceover_on_short = clipper_audio_mode.startswith("Add AI Voiceover")
+    add_voiceover_on_short = shorts_audio_mode.startswith("Overlay AI Voiceover")
 else:
-    target_short_duration = 20
+    num_shorts_to_make = 3
+    each_short_duration = 12
+    convert_vertical_916 = False
     add_voiceover_on_short = True
 
 selected_voice_label = st.sidebar.selectbox(
     "Voice Model & Language",
     list(VOICE_OPTIONS.keys()),
-    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
+    disabled=(multi_shorts_mode and not add_voiceover_on_short)
 )
 selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
@@ -166,28 +181,27 @@ voice_speed = st.sidebar.slider(
     value=1.00,
     step=0.05,
     help="1.00x is natural synced speed.",
-    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
+    disabled=(multi_shorts_mode and not add_voiceover_on_short)
 )
 
 auto_fit_audio = st.sidebar.checkbox(
     "🔄 Auto-fit voice duration to match full video",
     value=True,
     help="Stretches or compresses the audio slightly so the voiceover starts at 0s and finishes right as the video ends.",
-    disabled=(highlight_clipper_mode and not add_voiceover_on_short)
+    disabled=(multi_shorts_mode and not add_voiceover_on_short)
 )
 
 match_context = st.sidebar.text_area(
     "Match / Video Context (Optional)",
-    placeholder="e.g. Focus on sixes, wickets, and celebrations. India vs Pakistan final.",
-    help="Tell the AI what kind of moments you want prioritized or player names for commentary."
+    placeholder="e.g. Focus on sixes, wickets, and crowd celebrations. India vs Pakistan.",
+    help="Tell the AI what kind of moments you want extracted or player names for commentary."
 )
 
 
 def cleanup_temp_files():
     patterns = [
-        "temp_input.mp4", "generated_voice.mp3", "fitted_voice.wav",
-        "joined_highlights.mp4", "output_hooked.mp4",
-        "highlight_part_*.mp4", "highlight_list.txt"
+        "temp_input.mp4", "generated_voice*.mp3", "fitted_voice*.wav",
+        "output_hooked.mp4", "extracted_short_*.mp4", "raw_short_*.mp4"
     ]
     for pattern in patterns:
         for file in glob.glob(pattern):
@@ -264,40 +278,41 @@ def parse_timestamp_to_seconds(val) -> float:
     return float(s)
 
 
-def extract_best_highlight_moments(client, video_file, video_duration: float, target_total_sec: int, context_hint: str) -> list[dict]:
-    """Watches the video and returns non-overlapping start/end timestamps of the most exciting moments."""
-    # Sampling fps: 2fps for clips <=2 min, 1fps for longer videos
+def find_multiple_short_moments(client, video_file, video_duration: float, num_shorts: int, clip_dur: int, context_hint: str) -> list[dict]:
+    """Watches the video and returns at least `num_shorts` separate, high-impact moments to be exported as individual Shorts."""
     sample_fps = 2 if video_duration <= 120 else 1
     video_part = types.Part(
         file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
         video_metadata=types.VideoMetadata(fps=sample_fps),
     )
 
-    desired_total = min(float(target_short_duration), max(5.0, video_duration * 0.85))
-    num_clips = max(2, min(8, int(round(desired_total / 3.5))))
+    # Adapt clip duration if the source video is very short
+    effective_clip_dur = min(float(clip_dur), max(3.0, video_duration / float(num_shorts)))
 
     prompt = f"""
-    You are an expert viral video and sports highlight editor.
+    You are an expert viral YouTube Shorts & Instagram Reels producer.
     Watch this {video_duration:.1f}-second video carefully.
-    Find the {num_clips} MOST INTERESTING, HIGH-IMPACT, EXCITING moments in the video (e.g. peak action, big shots, wickets, goals, celebrations, emotional reactions, crowd roars, or key visual turning points).
-    User hint/focus: {context_hint or "Pick the most exciting peak action moments."}
+    Identify EXACTLY {num_shorts} SEPARATE, MOST INTERESTING, VIRAL-WORTHY moments that will each become its own standalone Short video.
+    User focus/hint: {context_hint or "Pick the most exciting, high-action, emotional, or viral moments."}
 
     CRITICAL RULES:
-    1. Every timestamp MUST be strictly between 0.0 and {video_duration:.1f} seconds (in float seconds, e.g. 4.5, 18.2).
-    2. Each individual clip should be between 2.0 and 6.0 seconds long.
-    3. The sum of all clip durations should be approximately {desired_total:.1f} seconds.
-    4. Keep clips in chronological order (`start` < `end`, and non-overlapping).
+    1. You MUST return at least {num_shorts} distinct moments.
+    2. Every `start` and `end` timestamp MUST be in float seconds strictly within `0.0` and `{video_duration:.1f}`.
+    3. Each individual Short should be approximately `{effective_clip_dur:.1f}` seconds long (minimum 3.0 seconds).
+    4. Spread the picks across different exciting parts of the video so you get {num_shorts} unique Shorts.
     5. Return ONLY a raw JSON list of objects with these exact keys:
     [
       {{
-        "start": 3.5,
-        "end": 7.0,
-        "reason": "Brief description of what exciting thing happens in this clip"
+        "title": "Catchy 4-word title for this Short",
+        "start": 2.0,
+        "end": 14.0,
+        "reason": "Detailed description of what happens visually in this specific Short"
       }}
     ]
-    Output ONLY valid JSON, no markdown fences, no extra text.
+    Output ONLY valid JSON, no markdown fences, no commentary.
     """
 
+    cleaned = []
     try:
         resp = generate_content_with_retry(
             client,
@@ -312,113 +327,72 @@ def extract_best_highlight_moments(client, video_file, video_duration: float, ta
                 raw = raw[4:].strip()
         items = json.loads(raw)
 
-        # Clean, sort, and de-overlap clips
-        cleaned = []
-        for item in items:
+        for idx, item in enumerate(items):
             st_t = max(0.0, parse_timestamp_to_seconds(item.get("start", 0.0)))
-            end_t = min(video_duration, parse_timestamp_to_seconds(item.get("end", st_t + 3.0)))
-            if end_t - st_t >= 1.2:
+            end_t = min(video_duration, parse_timestamp_to_seconds(item.get("end", st_t + effective_clip_dur)))
+            if end_t - st_t < 2.5:
+                end_t = min(video_duration, st_t + effective_clip_dur)
+            if end_t - st_t < 2.0 and st_t > 2.0:
+                st_t = max(0.0, end_t - effective_clip_dur)
+            if end_t - st_t >= 1.5:
                 cleaned.append({
+                    "title": str(item.get("title", f"Viral Short #{idx + 1}")).strip(),
                     "start": round(st_t, 2),
                     "end": round(end_t, 2),
-                    "reason": str(item.get("reason", "Highlight moment")).strip()
+                    "reason": str(item.get("reason", "Exciting highlight moment")).strip()
                 })
-
-        cleaned.sort(key=lambda x: x["start"])
-        merged = []
-        last_end = 0.0
-        running_dur = 0.0
-        for c in cleaned:
-            st_t = max(c["start"], last_end)
-            end_t = c["end"]
-            if end_t - st_t >= 1.2:
-                if running_dur + (end_t - st_t) > desired_total + 4.0 and len(merged) >= 2:
-                    break
-                merged.append({
-                    "start": round(st_t, 2),
-                    "end": round(end_t, 2),
-                    "reason": c["reason"]
-                })
-                last_end = end_t
-                running_dur += (end_t - st_t)
-
-        if merged:
-            return merged
     except Exception:
         pass
 
-    # Fallback if parsing fails: pick Beginning, Middle, and Climax segments
-    seg = min(4.0, video_duration / 3.0)
-    return [
-        {"start": 0.0, "end": round(seg, 2), "reason": "Opening highlight"},
-        {"start": round(video_duration * 0.45, 2), "end": round(video_duration * 0.45 + seg, 2), "reason": "Mid-video peak action"},
-        {"start": round(max(0.0, video_duration - seg), 2), "end": round(video_duration, 2), "reason": "Climax moment"},
-    ]
+    # Guarantee at least `num_shorts` clips even if video is short or AI returned fewer
+    if len(cleaned) < num_shorts:
+        step = video_duration / float(num_shorts)
+        for i in range(len(cleaned), num_shorts):
+            st_t = round(i * step, 2)
+            end_t = round(min(video_duration, st_t + effective_clip_dur), 2)
+            if end_t - st_t < 1.5:
+                st_t = round(max(0.0, video_duration - effective_clip_dur), 2)
+                end_t = round(video_duration, 2)
+            cleaned.append({
+                "title": f"Highlight Short #{i + 1}",
+                "start": st_t,
+                "end": end_t,
+                "reason": f"Key action segment #{i + 1} from the video"
+            })
+
+    return cleaned[:num_shorts]
 
 
-def cut_and_join_highlights_ffmpeg(input_video: str, moments: list[dict], output_joined: str) -> bool:
-    """Cuts each highlight segment cleanly and stitches them into a single seamless MP4 Short (zero captions)."""
-    if not moments:
-        return False
-
-    input_has_audio = has_audio_stream(input_video)
-    part_files = []
-
-    for idx, m in enumerate(moments):
-        st_t = m["start"]
-        dur = round(m["end"] - m["start"], 2)
-        if dur <= 0.5:
-            continue
-        part_path = f"highlight_part_{idx}.mp4"
-
-        if input_has_audio:
-            cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(st_t),
-                "-t", str(dur),
-                "-i", input_video,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-ar", "48000", "-ac", "2",
-                part_path
-            ]
-        else:
-            cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(st_t),
-                "-t", str(dur),
-                "-i", input_video,
-                "-f", "lavfi", "-t", str(dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-ar", "48000", "-ac", "2",
-                "-shortest",
-                part_path
-            ]
-
-        subprocess.run(cmd, capture_output=True, check=True)
-        if os.path.exists(part_path):
-            part_files.append(part_path)
-
-    if not part_files:
-        return False
-
-    list_path = "highlight_list.txt"
-    with open(list_path, "w", encoding="utf-8") as f:
-        for p in part_files:
-            f.write(f"file '{p}'\n")
-
-    subprocess.run([
+def extract_single_short_ffmpeg(input_video: str, start_t: float, end_t: float, output_path: str, vertical_916: bool = True) -> bool:
+    """Cuts a single standalone Short from `input_video` between `start_t` and `end_t` with zero captions."""
+    dur = max(1.5, round(end_t - start_t, 2))
+    cmd = [
         "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", list_path,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-ar", "48000", "-ac", "2",
-        output_joined
-    ], capture_output=True, check=True)
+        "-ss", str(start_t),
+        "-t", str(dur),
+        "-i", input_video,
+    ]
+    if vertical_916:
+        vf_str = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,format=yuv420p"
+        cmd.extend(["-vf", vf_str])
+    else:
+        cmd.extend(["-pix_fmt", "yuv420p"])
 
-    return os.path.exists(output_joined)
+    if has_audio_stream(input_video):
+        cmd.extend([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            output_path
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-an",
+            output_path
+        ])
+
+    subprocess.run(cmd, capture_output=True, check=True)
+    return os.path.exists(output_path)
 
 
 # --- MAIN PAGE EXECUTION ---
@@ -428,7 +402,6 @@ if uploaded_file is not None:
     temp_video = "temp_input.mp4"
     script_audio = "generated_voice.mp3"
     fitted_audio = "fitted_voice.wav"
-    joined_highlights = "joined_highlights.mp4"
     output_video = "output_hooked.mp4"
 
     with open(temp_video, "wb") as f:
@@ -437,8 +410,8 @@ if uploaded_file is not None:
     st.video(temp_video)
 
     btn_label = (
-        "✂️ Find Best Moments, Cut & Join into 1 Short"
-        if highlight_clipper_mode
+        f"🔥 Find Best Moments & Convert into {num_shorts_to_make} Separate Shorts"
+        if multi_shorts_mode
         else "🚀 Analyze Video & Overlay Viral Hook"
     )
 
@@ -463,14 +436,16 @@ if uploaded_file is not None:
         client = genai.Client(api_key=api_key)
 
         # =========================================================================
-        # MODE 1: AUTO HIGHLIGHT CLIPPER (FIND BEST MOMENTS, CUT & JOIN INTO 1 SHORT)
+        # MODE 1: AUTO MULTI-SHORTS EXTRACTOR (3+ SEPARATE SHORTS, NO JOINING)
         # =========================================================================
-        if highlight_clipper_mode:
-            with st.status("Scanning Video for Most Interesting Moments & Joining into 1 Short...", expanded=True) as status:
-                orig_duration = get_file_duration(temp_video)
-                st.write(f"⏱️ Original Video Duration: **{orig_duration:.2f} seconds**")
+        if multi_shorts_mode:
+            generated_shorts_info = []
 
-                st.write("📹 Uploading video to Gemini to detect peak action & highlight timestamps...")
+            with st.status(f"Scanning Video & Generating {num_shorts_to_make} Separate Shorts...", expanded=True) as status:
+                orig_duration = get_file_duration(temp_video)
+                st.write(f"⏱️ Source Video Duration: **{orig_duration:.2f} seconds**")
+
+                st.write("📹 Uploading video to Gemini to detect the top viral moments...")
                 try:
                     video_file = client.files.upload(file=temp_video)
                 except Exception as e:
@@ -485,9 +460,9 @@ if uploaded_file is not None:
                     st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
                     st.stop()
 
-                st.write(f"🔎 Identifying the best moments (Target Short length: ~**{target_short_duration}s**)...")
-                moments = extract_best_highlight_moments(
-                    client, video_file, orig_duration, target_short_duration, match_context
+                st.write(f"🔎 Finding the **{num_shorts_to_make}** most interesting moments (~{each_short_duration}s each)...")
+                moments = find_multiple_short_moments(
+                    client, video_file, orig_duration, num_shorts_to_make, each_short_duration, match_context
                 )
 
                 try:
@@ -495,134 +470,157 @@ if uploaded_file is not None:
                 except Exception:
                     pass
 
-                st.write(f"✂️ Found **{len(moments)}** highlight moments! Cutting & joining clips via FFmpeg (No captions):")
-                for i, m in enumerate(moments, start=1):
-                    clip_len = m["end"] - m["start"]
-                    st.write(f"  • **Clip {i} [{m['start']}s – {m['end']}s]** ({clip_len:.1f}s): {m['reason']}")
+                # Process each moment into its own separate MP4 Short
+                for idx, m in enumerate(moments, start=1):
+                    st_t = m["start"]
+                    end_t = m["end"]
+                    clip_len = round(end_t - st_t, 2)
+                    raw_short_path = f"raw_short_{idx}.mp4"
+                    final_short_path = f"extracted_short_{idx}.mp4"
 
-                if not cut_and_join_highlights_ffmpeg(temp_video, moments, joined_highlights):
-                    st.error("Failed to cut and join highlight segments.")
-                    st.stop()
+                    st.write(f"✂️ **Short #{idx}: {m['title']}** `[{st_t}s – {end_t}s]` ({clip_len}s) — *{m['reason']}*")
 
-                short_duration = get_file_duration(joined_highlights)
-                st.write(f"✅ Joined Highlight Short Duration: **{short_duration:.2f} seconds**")
+                    if not extract_single_short_ffmpeg(temp_video, st_t, end_t, raw_short_path, vertical_916=convert_vertical_916):
+                        st.warning(f"Could not extract Short #{idx}.")
+                        continue
 
-                # Option A: Pure Cut & Join (Keep Original Video Audio, No Voiceover, No Captions)
-                if not add_voiceover_on_short:
-                    os.replace(joined_highlights, output_video)
-                    status.update(label="✨ Best Moments Cut & Joined into 1 Short Successfully!", state="complete", expanded=False)
+                    actual_short_dur = get_file_duration(raw_short_path)
+                    short_script_text = ""
 
-                # Option B: Overlay AI Voiceover on the newly joined Highlight Short
-                else:
-                    target_lang = selected_voice_info["lang"]
-                    script_type = selected_voice_info["script_type"]
-                    target_words = max(10, int(short_duration * 2.4 * voice_speed))
+                    # Option A: Keep original audio without voiceover
+                    if not add_voiceover_on_short:
+                        os.replace(raw_short_path, final_short_path)
+                    # Option B: Generate & overlay dedicated AI voiceover for this specific Short
+                    else:
+                        target_lang = selected_voice_info["lang"]
+                        script_type = selected_voice_info["script_type"]
+                        target_words = max(10, int(actual_short_dur * 2.4 * voice_speed))
+                        style_guide = get_sidhu_style_guide(lang_note=script_type)
+                        phrase_rule = "FOR THIS SHORT, build the script around these phrases (use at least 2): " + " | ".join(random.sample(CORE_PHRASES, 3))
 
-                    st.write(f"🤖 Writing Sidhu Paaji commentary synced to your new {short_duration:.1f}s Highlight Short...")
-                    moments_summary = "\n".join(
-                        f"- Clip {i+1} ({m['end'] - m['start']:.1f}s): {m['reason']}"
-                        for i, m in enumerate(moments)
-                    )
-                    style_guide = get_sidhu_style_guide(lang_note=script_type)
-                    phrase_rule = "FOR THIS SHORT, build the script around these phrases (use at least 3): " + " | ".join(random.sample(CORE_PHRASES, 4))
+                        short_prompt = f"""
+                        You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live commentary.
+                        Write a high-energy voiceover for Short #{idx} ({actual_short_dur:.1f} seconds long).
+                        What happens in this Short: {m['title']} — {m['reason']}
+                        User Context: {match_context or "none provided"}
 
-                    prompt = f"""
-                    You are a master viral video scriptwriter writing as Navjot Singh Sidhu (Sidhu Paaji) doing live commentary.
-                    Below is the exact sequence of highlight clips joined into a {short_duration:.1f}-second Short:
-                    {moments_summary}
+                        {style_guide}
+                        {phrase_rule}
 
-                    USER CONTEXT: {match_context or "none provided"}
-                    {style_guide}
-                    {phrase_rule}
-
-                    CRITICAL LANGUAGE & TIMING CONSTRAINTS:
-                    1. Write the ENTIRE script natively in {target_lang} using standard {script_type}.
-                    2. Write approximately **{target_words} words** so it covers the {short_duration:.1f}s Short at 1x speed.
-                    3. Output ONLY the plain script text. No markdown, no timestamps, no labels.
-                    """
-                    resp = generate_content_with_retry(
-                        client,
-                        model="gemini-3.6-flash",
-                        contents=[prompt],
-                        config=types.GenerateContentConfig(temperature=1.1, top_p=0.95)
-                    )
-                    creative_script = (resp.text or "").strip()
-                    st.markdown(f"**Generated Highlight Voiceover ({target_lang}):**\n> {creative_script}")
-
-                    if selected_voice_info["engine"] == "gemini":
-                        audio_response = generate_content_with_retry(
+                        CRITICAL LANGUAGE & TIMING CONSTRAINTS:
+                        1. Write the ENTIRE script natively in {target_lang} using standard {script_type}.
+                        2. Write approximately **{target_words} words** so it covers the {actual_short_dur:.1f}s Short at 1x speed.
+                        3. Output ONLY the plain script text. No markdown, no timestamps, no labels.
+                        """
+                        resp = generate_content_with_retry(
                             client,
-                            model="gemini-3.8-flash-tts",
-                            contents=[creative_script],
-                            config=types.GenerateContentConfig(
-                                response_modalities=["AUDIO"],
-                                speech_config=types.SpeechConfig(
-                                    voice_config=types.VoiceConfig(
-                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                            voice_name=selected_voice_info["code"]
+                            model="gemini-3.6-flash",
+                            contents=[short_prompt],
+                            config=types.GenerateContentConfig(temperature=1.1, top_p=0.95)
+                        )
+                        short_script_text = (resp.text or "").strip()
+
+                        s_audio = f"generated_voice_{idx}.mp3"
+                        f_audio = f"fitted_voice_{idx}.wav"
+
+                        if selected_voice_info["engine"] == "gemini":
+                            audio_response = generate_content_with_retry(
+                                client,
+                                model="gemini-3.8-flash-tts",
+                                contents=[short_script_text],
+                                config=types.GenerateContentConfig(
+                                    response_modalities=["AUDIO"],
+                                    speech_config=types.SpeechConfig(
+                                        voice_config=types.VoiceConfig(
+                                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                                voice_name=selected_voice_info["code"]
+                                            )
                                         )
                                     )
                                 )
                             )
-                        )
-                        audio_bytes = None
-                        if audio_response.candidates and audio_response.candidates[0].content.parts:
-                            for part in audio_response.candidates[0].content.parts:
-                                if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
-                                    audio_bytes = part.inline_data.data
-                                    break
-                        if audio_bytes:
-                            with open(script_audio, "wb") as f:
-                                f.write(audio_bytes)
+                            audio_bytes = None
+                            if audio_response.candidates and audio_response.candidates[0].content.parts:
+                                for part in audio_response.candidates[0].content.parts:
+                                    if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
+                                        audio_bytes = part.inline_data.data
+                                        break
+                            if audio_bytes:
+                                with open(s_audio, "wb") as f:
+                                    f.write(audio_bytes)
                         else:
-                            st.error("Gemini failed to return audio data.")
-                            st.stop()
-                    else:
-                        asyncio.run(synthesize_voice(
-                            text=creative_script,
-                            voice=selected_voice_info["code"],
-                            output_path=script_audio,
-                            rate=selected_voice_info.get("rate", "+0%"),
-                            pitch=selected_voice_info.get("pitch", "+15Hz")
-                        ))
+                            asyncio.run(synthesize_voice(
+                                text=short_script_text,
+                                voice=selected_voice_info["code"],
+                                output_path=s_audio,
+                                rate=selected_voice_info.get("rate", "+0%"),
+                                pitch=selected_voice_info.get("pitch", "+15Hz")
+                            ))
 
-                    audio_duration = get_file_duration(script_audio)
-                    if auto_fit_audio:
-                        final_tempo = max(0.85, min(audio_duration / short_duration, 1.35))
-                    else:
-                        final_tempo = voice_speed
+                        if os.path.exists(s_audio):
+                            a_dur = get_file_duration(s_audio)
+                            final_tempo = max(0.85, min(a_dur / actual_short_dur, 1.35)) if auto_fit_audio else voice_speed
+                            a_filter = (
+                                f"atempo={final_tempo},"
+                                f"loudnorm=I=-14.0:TP=-1.5:LRA=11,"
+                                f"apad=whole_dur={actual_short_dur}"
+                            )
+                            subprocess.run([
+                                "ffmpeg", "-y", "-i", s_audio,
+                                "-filter:a", a_filter,
+                                "-t", str(actual_short_dur),
+                                "-ar", "48000", "-ac", "2",
+                                f_audio
+                            ], capture_output=True, check=True)
 
-                    audio_filter = (
-                        f"atempo={final_tempo},"
-                        f"loudnorm=I=-14.0:TP=-1.5:LRA=11,"
-                        f"apad=whole_dur={short_duration}"
-                    )
-                    subprocess.run([
-                        "ffmpeg", "-y", "-i", script_audio,
-                        "-filter:a", audio_filter,
-                        "-t", str(short_duration),
-                        "-ar", "48000", "-ac", "2",
-                        fitted_audio
-                    ], capture_output=True, check=True)
+                            subprocess.run([
+                                "ffmpeg", "-y",
+                                "-i", raw_short_path,
+                                "-i", f_audio,
+                                "-c:v", "copy",
+                                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                                "-map", "0:v:0", "-map", "1:a:0",
+                                "-t", str(actual_short_dur),
+                                final_short_path
+                            ], capture_output=True, check=True)
+                        else:
+                            os.replace(raw_short_path, final_short_path)
 
-                    subprocess.run([
-                        "ffmpeg", "-y",
-                        "-i", joined_highlights,
-                        "-i", fitted_audio,
-                        "-c:v", "copy",
-                        "-c:a", "aac",
-                        "-ar", "48000", "-ac", "2",
-                        "-map", "0:v:0", "-map", "1:a:0",
-                        "-t", str(short_duration),
-                        output_video
-                    ], check=True)
+                    if os.path.exists(final_short_path):
+                        generated_shorts_info.append({
+                            "index": idx,
+                            "title": m["title"],
+                            "start": st_t,
+                            "end": end_t,
+                            "duration": actual_short_dur,
+                            "reason": m["reason"],
+                            "script": short_script_text,
+                            "path": final_short_path
+                        })
 
-                    status.update(label="✨ Best Moments Joined & Voiceover Overlaid!", state="complete", expanded=False)
+                status.update(
+                    label=f"✨ Successfully Generated {len(generated_shorts_info)} Separate Viral Shorts!",
+                    state="complete",
+                    expanded=False
+                )
 
-            st.subheader("🔥 Final Joined Highlight Short")
-            st.video(output_video)
-            with open(output_video, "rb") as f_dl:
-                st.download_button("⬇️ Download Joined Highlight Short (MP4)", data=f_dl, file_name="highlight_short.mp4", mime="video/mp4")
+            st.subheader(f"🔥 Generated Viral Shorts ({len(generated_shorts_info)} Separate Videos)")
+            cols = st.columns(min(3, max(1, len(generated_shorts_info))))
+            for i, info in enumerate(generated_shorts_info):
+                with cols[i % len(cols)]:
+                    st.markdown(f"### 🎬 Short #{info['index']}: {info['title']}")
+                    st.caption(f"⏱️ **Timestamp:** `{info['start']}s – {info['end']}s` ({info['duration']:.1f}s) | {info['reason']}")
+                    st.video(info["path"])
+                    if info["script"]:
+                        st.info(f"🎙️ {info['script']}")
+                    with open(info["path"], "rb") as f_dl:
+                        st.download_button(
+                            label=f"⬇️ Download Short #{info['index']} (MP4)",
+                            data=f_dl,
+                            file_name=f"viral_short_{info['index']}.mp4",
+                            mime="video/mp4",
+                            key=f"dl_short_{info['index']}"
+                        )
 
         # =========================================================================
         # MODE 2: STANDARD FULL-VIDEO VOICEOVER MODES (SIDHU PAAJI, SOUL LINES, ETC.)
