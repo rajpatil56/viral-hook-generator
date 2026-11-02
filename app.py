@@ -15,12 +15,24 @@ import wave
 import random
 import asyncio
 import subprocess
+import concurrent.futures
 import streamlit as st
 import edge_tts
 from google import genai
 from google.genai import types
 
-# --- EXACT SIDHU PAAJI COMMENTARY DATA MODULE ---
+# --- 7 SCRIPT STYLES LIST ---
+SEVEN_SCRIPT_STYLES = [
+    "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
+    "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
+    "High-Dopamine Viral Opening",
+    "Viral Explanation Mode (Hook-Scoop-Twist)",
+    "Cinematic Storytelling",
+    "Humorous & Punchy",
+    "Explainer Hook",
+]
+
+# --- SIDHU PAAJI COMMENTARY DATA MODULE ---
 CORE_PHRASES = [
     "ओए गुरु!", "ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "छा गया मुंडा!",
     "गगनचुंबी छक्का!", "धूल चटा दी", "आत्मा निकाल दी", "तांडव मचा दिया",
@@ -81,6 +93,61 @@ RULES: {RULES}
 """
 
 
+def get_style_guide(style_name: str, script_type: str) -> str:
+    """Returns detailed instructions tailored to whichever of the 7 styles the user picked."""
+    if style_name == "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)":
+        return get_sidhu_style_guide(script_type)
+
+    if style_name == "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)":
+        return f"""
+STYLE: Soul Lines Paaji Mode (Hook -> Hero -> Roast -> Closer) in {script_type}.
+1. 0-25% HOOK: Immediate high-energy Punjabi-flavoured reaction to the opening frame.
+2. 25-50% HERO: Poetic, larger-than-life praise for the main action/subject on screen.
+3. 50-75% ROAST: Playful, witty dominance line aimed at the opponent or challenge.
+4. 75-100% CLOSER: Memorable, punchy mic-drop ending that lands right as the clip finishes.
+"""
+
+    if style_name == "High-Dopamine Viral Opening":
+        return f"""
+STYLE: High-Dopamine Viral Opening in {script_type}.
+- Start with an ultra-fast, scroll-stopping pattern interrupt in the first 2 seconds ("Wait—look closely at what happens right here!").
+- Keep sentences short, punchy, and hyper-engaging with zero filler words.
+- Build relentless curiosity toward the climax moment in the video and end with a sharp payoff line.
+"""
+
+    if style_name == "Viral Explanation Mode (Hook-Scoop-Twist)":
+        return f"""
+STYLE: Viral Explanation Mode (Hook -> Scoop -> Twist) in {script_type}.
+1. HOOK (0-25%): Point out the most shocking or unusual visual detail immediately.
+2. SCOOP (25-70%): Explain the context or breakdown of what is actually happening on screen in crisp, simple language.
+3. TWIST (70-100%): Deliver the unexpected detail, outcome, or takeaway that makes viewers re-watch.
+"""
+
+    if style_name == "Cinematic Storytelling":
+        return f"""
+STYLE: Cinematic Storytelling in {script_type}.
+- Deep, dramatic, movie-trailer narration tone.
+- Describe the atmosphere, tension, and stakes unfolding visually on screen.
+- Use vivid sensory language and deliberate pacing that builds to a powerful final statement.
+"""
+
+    if style_name == "Humorous & Punchy":
+        return f"""
+STYLE: Humorous & Punchy in {script_type}.
+- Witty, relatable, meme-style observational commentary on what is happening in the clip.
+- Use comedic timing, playful exaggeration, and a hilarious punchline at the end.
+"""
+
+    if style_name == "Explainer Hook":
+        return f"""
+STYLE: Explainer Hook in {script_type}.
+- Open with a compelling "Did you notice this?" or "Here is why this moment is insane..." hook.
+- Walk the viewer clearly and concisely through the visual action step-by-step so they understand the exact skill, science, or strategy behind it.
+"""
+
+    return f"STYLE: {style_name} in {script_type}. High-energy, scene-synced viral commentary."
+
+
 st.set_page_config(page_title="Multimodal Video Hook & Multi-Shorts Extractor", layout="wide")
 st.title("🎬 Direct Multimodal Video Hook & Multi-Shorts Extractor")
 
@@ -118,16 +185,7 @@ VOICE_OPTIONS = {
 
 script_style = st.sidebar.selectbox(
     "Mode / Script Style",
-    [
-        "Auto Multi-Shorts Extractor (Generate 3+ Separate Shorts)",
-        "Sidhu Paaji Commentary (Oye Guru! Thoko Taali!)",
-        "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
-        "High-Dopamine Viral Opening",
-        "Viral Explanation Mode (Hook-Scoop-Twist)",
-        "Cinematic Storytelling",
-        "Humorous & Punchy",
-        "Explainer Hook"
-    ]
+    ["Auto Multi-Shorts Extractor (Generate 3+ Separate Shorts)"] + SEVEN_SCRIPT_STYLES
 )
 
 multi_shorts_mode = (script_style == "Auto Multi-Shorts Extractor (Generate 3+ Separate Shorts)")
@@ -160,15 +218,26 @@ if multi_shorts_mode:
         "🔊 Audio for Each Generated Short",
         [
             "Keep Original Video Audio Only (Pure Extracted Shorts, No Captions)",
-            "Overlay AI Voiceover on Each Short (Sidhu Paaji Style)",
+            "Overlay AI Voiceover on Each Short (Choose from 7 Styles)",
         ]
     )
     add_voiceover_on_short = shorts_audio_mode.startswith("Overlay AI Voiceover")
+
+    if add_voiceover_on_short:
+        multi_shorts_voiceover_style = st.sidebar.selectbox(
+            "🎭 Voiceover Script Style for Extracted Shorts (7 Modes)",
+            SEVEN_SCRIPT_STYLES,
+            index=0,
+            help="Pick which of the 7 script styles to use for the AI voiceover on each extracted Short."
+        )
+    else:
+        multi_shorts_voiceover_style = SEVEN_SCRIPT_STYLES[0]
 else:
     num_shorts_to_make = 3
     each_short_duration = 12
     convert_vertical_916 = False
     add_voiceover_on_short = True
+    multi_shorts_voiceover_style = script_style
 
 selected_voice_label = st.sidebar.selectbox(
     "Voice Model & Language",
@@ -262,9 +331,22 @@ def generate_content_with_retry(client, model, contents, config=None, max_retrie
             raise e
 
 
-async def synthesize_edge_voice(text: str, voice: str, output_path: str, rate: str = "+0%", pitch: str = "+0Hz"):
-    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch)
-    await communicate.save(output_path)
+def run_edge_tts_sync(text: str, voice: str, output_path: str, rate: str = "+0%", pitch: str = "+0Hz"):
+    """Safely runs async edge-tts even if Streamlit already has an active event loop."""
+    async def _run():
+        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch)
+        await communicate.save(output_path)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(lambda: asyncio.run(_run())).result()
+    else:
+        asyncio.run(_run())
 
 
 def synthesize_speech_unified(client, text: str, voice_info: dict, output_audio_path: str):
@@ -300,14 +382,12 @@ def synthesize_speech_unified(client, text: str, voice_info: dict, output_audio_
     fallback_code = voice_info.get("code", "hi-IN-MadhurNeural")
     if not fallback_code.endswith("Neural"):
         fallback_code = "hi-IN-MadhurNeural" if voice_info.get("lang") != "English" else "en-US-GuyNeural"
-    asyncio.run(
-        synthesize_edge_voice(
-            text=text,
-            voice=fallback_code,
-            output_path=output_audio_path,
-            rate=voice_info.get("rate", "+0%"),
-            pitch=voice_info.get("pitch", "+0Hz"),
-        )
+    run_edge_tts_sync(
+        text=text,
+        voice=fallback_code,
+        output_path=output_audio_path,
+        rate=voice_info.get("rate", "+0%"),
+        pitch=voice_info.get("pitch", "+0Hz"),
     )
 
 
@@ -339,7 +419,6 @@ def fit_and_mix_voiceover(
     effective_speed = base_speed
 
     if auto_fit and target_duration > 1.0 and raw_voice_dur > 0.5:
-        # Fit audio so it finishes right before the video ends
         effective_speed = (raw_voice_dur / (target_duration * 0.96)) * base_speed
         effective_speed = max(0.80, min(1.65, effective_speed))
 
@@ -392,13 +471,12 @@ def generate_commentary_script(
     context_hint: str,
     moment_desc: str = "",
 ) -> str:
-    """Generates a scene-synced voiceover script matched to the target duration."""
+    """Generates a scene-synced voiceover script matched to the target duration and chosen style."""
     target_words = max(8, int(duration_sec * 2.4))
     lang = voice_info["lang"]
     script_type = voice_info["script_type"]
 
-    is_sidhu = ("Sidhu" in style_name) or ("Paaji" in style_name) or ("Multi-Shorts" in style_name)
-    style_instructions = get_sidhu_style_guide(script_type) if is_sidhu else f"Style: {style_name}. High-energy, viral pacing."
+    style_instructions = get_style_guide(style_name, script_type)
 
     prompt = f"""
     Watch this {duration_sec:.1f}-second video clip carefully.
@@ -486,8 +564,17 @@ def find_multiple_short_moments(client, video_file, video_duration: float, num_s
             if raw.lower().startswith("json"):
                 raw = raw[4:].strip()
         items = json.loads(raw)
+        if isinstance(items, dict):
+            for v in items.values():
+                if isinstance(v, list):
+                    items = v
+                    break
+        if not isinstance(items, list):
+            items = []
 
         for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
             st_t = max(0.0, parse_timestamp_to_seconds(item.get("start", 0.0)))
             end_t = min(video_duration, parse_timestamp_to_seconds(item.get("end", st_t + effective_clip_dur)))
             if end_t - st_t < 2.5:
@@ -649,12 +736,12 @@ if uploaded_file is not None:
 
                     script_text = ""
                     if add_voiceover_on_short:
-                        st.write(f"🎙️ Writing & synthesizing commentary for Short #{idx}...")
+                        st.write(f"🎙️ Writing & synthesizing `{multi_shorts_voiceover_style}` commentary for Short #{idx}...")
                         script_text = generate_commentary_script(
                             client=client,
                             video_source_part=None,
                             duration_sec=clip_dur,
-                            style_name="Sidhu Paaji Commentary",
+                            style_name=multi_shorts_voiceover_style,
                             voice_info=selected_voice_info,
                             context_hint=match_context,
                             moment_desc=f"{m['title']} - {m['reason']}",
@@ -691,7 +778,7 @@ if uploaded_file is not None:
                     st.markdown(f"#### #{info['index']}: {info['title']}")
                     st.caption(f"⏱️ `{info['start']:.1f}s - {info['end']:.1f}s` | {info['reason']}")
                     if info["script"]:
-                        st.info(f"🗣️ **Commentary:** {info['script']}")
+                        st.info(f"🗣️ **Commentary ({multi_shorts_voiceover_style}):** {info['script']}")
                     if os.path.exists(info["path"]):
                         st.video(info["path"])
                         with open(info["path"], "rb") as vf:
@@ -731,7 +818,7 @@ if uploaded_file is not None:
                     video_metadata=types.VideoMetadata(fps=2 if video_duration <= 90 else 1),
                 )
 
-                st.write("✍️ Generating scene-synced script...")
+                st.write(f"✍️ Generating scene-synced script (`{script_style}`)...")
                 generated_script = generate_commentary_script(
                     client=client,
                     video_source_part=video_part,
@@ -772,6 +859,6 @@ if uploaded_file is not None:
                     st.download_button(
                         label="⬇️ Download Final Hooked Video",
                         data=f,
-                        file_name="sidhu_commentary_output.mp4",
+                        file_name="commentary_output.mp4",
                         mime="video/mp4",
                     )
