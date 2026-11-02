@@ -32,6 +32,21 @@ SEVEN_SCRIPT_STYLES = [
     "Explainer Hook",
 ]
 
+# --- ACTIVE GEMINI 3.6 / 3.8 MODELS ---
+TEXT_VIDEO_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.8-pro",
+    "gemini-3.6-pro",
+]
+
+TTS_MODELS = [
+    "gemini-3.8-flash-tts",
+    "gemini-3.6-flash-tts",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+]
+
 # --- SIDHU PAAJI COMMENTARY DATA MODULE ---
 CORE_PHRASES = [
     "ओए गुरु!", "ठोको ताली!", "चक दे फट्टे, नप दे किल्ली!", "छा गया मुंडा!",
@@ -154,6 +169,13 @@ st.title("🎬 Direct Multimodal Video Hook & Multi-Shorts Extractor")
 # Sidebar Configuration
 st.sidebar.header("Settings")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get a key from Google AI Studio")
+
+primary_gemini_model = st.sidebar.selectbox(
+    "🧠 Gemini Model (3.8 / 3.6)",
+    TEXT_VIDEO_MODELS,
+    index=0,
+    help="Select Gemini 3.8 Flash or Gemini 3.6 Flash (automatically falls back between 3.8 and 3.6 if one is busy)."
+)
 
 # Integrated Voice Roster
 VOICE_OPTIONS = {
@@ -311,24 +333,35 @@ def get_file_state_str(file_obj):
     return str(state).upper()
 
 
-def generate_content_with_retry(client, model, contents, config=None, max_retries=6):
-    delay = 3.0
-    transient_indicators = [
-        "429", "RESOURCE_EXHAUSTED", "Quota",
-        "503", "UNAVAILABLE", "500", "502", "504",
-        "high demand", "Overloaded", "try again later"
-    ]
-    for attempt in range(max_retries):
-        try:
-            return client.models.generate_content(model=model, contents=contents, config=config)
-        except Exception as e:
-            err_msg = str(e)
-            if any(indicator in err_msg for indicator in transient_indicators):
-                if attempt < max_retries - 1:
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-            raise e
+def generate_content_with_retry(client, model, contents, config=None, max_retries=4):
+    """Calls Gemini 3.8 / 3.6 with automatic fallback between 3.8 and 3.6 and exponential backoff."""
+    if "tts" in model.lower():
+        models_to_try = [model] + [m for m in TTS_MODELS if m != model]
+    else:
+        models_to_try = [model] + [m for m in TEXT_VIDEO_MODELS if m != model]
+
+    last_err = None
+    for current_model in models_to_try:
+        delay = 3.0
+        for attempt in range(max_retries):
+            try:
+                norm_contents = [contents] if isinstance(contents, str) else contents
+                return client.models.generate_content(
+                    model=current_model,
+                    contents=norm_contents,
+                    config=config
+                )
+            except Exception as e:
+                last_err = e
+                err_msg = str(e)
+                if any(k in err_msg for k in ["429", "RESOURCE_EXHAUSTED", "Quota", "503", "UNAVAILABLE", "500", "502", "504", "Overloaded", "high demand"]):
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                # Try next model in the 3.8 / 3.6 list
+                break
+    raise last_err
 
 
 def run_edge_tts_sync(text: str, voice: str, output_path: str, rate: str = "+0%", pitch: str = "+0Hz"):
@@ -350,12 +383,12 @@ def run_edge_tts_sync(text: str, voice: str, output_path: str, rate: str = "+0%"
 
 
 def synthesize_speech_unified(client, text: str, voice_info: dict, output_audio_path: str):
-    """Synthesizes speech using either Gemini TTS or Edge TTS."""
+    """Synthesizes speech using Gemini 3.8/3.6 TTS or Edge TTS."""
     if voice_info["engine"] == "gemini":
         try:
             response = generate_content_with_retry(
                 client,
-                model="gemini-2.5-flash-preview-tts",
+                model="gemini-3.8-flash-tts",
                 contents=text,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
@@ -367,6 +400,7 @@ def synthesize_speech_unified(client, text: str, voice_info: dict, output_audio_
                         )
                     ),
                 ),
+                max_retries=2,
             )
             pcm_data = response.candidates[0].content.parts[0].inline_data.data
             with wave.open(output_audio_path, "wb") as wf:
@@ -376,12 +410,18 @@ def synthesize_speech_unified(client, text: str, voice_info: dict, output_audio_
                 wf.writeframes(pcm_data)
             return
         except Exception as e:
-            st.warning(f"Gemini TTS fallback to Edge-TTS triggered ({e})")
+            st.warning(f"Switching to Edge-TTS voice engine ({type(e).__name__}).")
 
     # Fallback / Edge-TTS execution
     fallback_code = voice_info.get("code", "hi-IN-MadhurNeural")
     if not fallback_code.endswith("Neural"):
-        fallback_code = "hi-IN-MadhurNeural" if voice_info.get("lang") != "English" else "en-US-GuyNeural"
+        if voice_info.get("lang") == "Marathi":
+            fallback_code = "mr-IN-AarohiNeural"
+        elif voice_info.get("lang") == "English":
+            fallback_code = "en-US-GuyNeural"
+        else:
+            fallback_code = "hi-IN-MadhurNeural"
+
     run_edge_tts_sync(
         text=text,
         voice=fallback_code,
@@ -462,8 +502,19 @@ def fit_and_mix_voiceover(
     subprocess.run(cmd, capture_output=True, check=True)
 
 
+def build_fallback_script(style_name: str, voice_info: dict, moment_desc: str) -> str:
+    """Provides a clean emergency script matching the chosen style if API quota is exhausted mid-run."""
+    lang = voice_info.get("lang", "Hindi")
+    if lang == "English":
+        return f"Watch closely right here! {moment_desc}. That was an unbelievable moment!"
+    if "Sidhu" in style_name or "Paaji" in style_name:
+        return "ओए गुरु, क्या बात है! छा गया मुंडा, गगनचुंबी कमाल कर दिया! धूल चटा दी गुरु, ठोको ताली!"
+    return "देखिए इस शानदार पल को! क्या गज़ब का एक्शन और टाइमिंग है, बिल्कुल होश उड़ा देने वाला नज़ारा!"
+
+
 def generate_commentary_script(
     client,
+    model_name: str,
     video_source_part,
     duration_sec: float,
     style_name: str,
@@ -471,7 +522,7 @@ def generate_commentary_script(
     context_hint: str,
     moment_desc: str = "",
 ) -> str:
-    """Generates a scene-synced voiceover script matched to the target duration and chosen style."""
+    """Generates a scene-synced voiceover script using Gemini 3.8 / 3.6 matched to the target duration and chosen style."""
     target_words = max(8, int(duration_sec * 2.4))
     lang = voice_info["lang"]
     script_type = voice_info["script_type"]
@@ -493,14 +544,35 @@ def generate_commentary_script(
     - Do NOT include stage directions, timestamps, brackets, speaker labels, or markdown formatting.
     """
 
-    contents = [video_source_part, prompt] if video_source_part is not None else [prompt]
-    resp = generate_content_with_retry(
-        client,
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=types.GenerateContentConfig(temperature=0.7),
-    )
-    return (resp.text or "").strip().strip('"')
+    try:
+        contents = [video_source_part, prompt] if video_source_part is not None else [prompt]
+        resp = generate_content_with_retry(
+            client,
+            model=model_name,
+            contents=contents,
+            config=types.GenerateContentConfig(temperature=0.7),
+        )
+        text_out = (resp.text or "").strip().strip('"')
+        if text_out:
+            return text_out
+    except Exception as e:
+        if video_source_part is not None:
+            try:
+                resp = generate_content_with_retry(
+                    client,
+                    model=model_name,
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(temperature=0.7),
+                )
+                text_out = (resp.text or "").strip().strip('"')
+                if text_out:
+                    return text_out
+            except Exception as inner_e:
+                st.warning(f"API Notice ({model_name}): {inner_e}")
+        else:
+            st.warning(f"API Notice ({model_name}): {e}")
+
+    return build_fallback_script(style_name, voice_info, moment_desc)
 
 
 def parse_timestamp_to_seconds(val) -> float:
@@ -517,8 +589,16 @@ def parse_timestamp_to_seconds(val) -> float:
     return float(s)
 
 
-def find_multiple_short_moments(client, video_file, video_duration: float, num_shorts: int, clip_dur: int, context_hint: str) -> list[dict]:
-    """Watches the video and returns at least `num_shorts` separate, high-impact moments to be exported as individual Shorts."""
+def find_multiple_short_moments(
+    client,
+    model_name: str,
+    video_file,
+    video_duration: float,
+    num_shorts: int,
+    clip_dur: int,
+    context_hint: str
+) -> list[dict]:
+    """Watches the video with Gemini 3.8 / 3.6 and returns at least `num_shorts` separate moments."""
     sample_fps = 2 if video_duration <= 120 else 1
     video_part = types.Part(
         file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
@@ -554,7 +634,7 @@ def find_multiple_short_moments(client, video_file, video_duration: float, num_s
     try:
         resp = generate_content_with_retry(
             client,
-            model="gemini-2.5-flash",
+            model=model_name,
             contents=[video_part, prompt],
             config=types.GenerateContentConfig(temperature=0.2)
         )
@@ -588,8 +668,8 @@ def find_multiple_short_moments(client, video_file, video_duration: float, num_s
                     "end": round(end_t, 2),
                     "reason": str(item.get("reason", "Exciting highlight moment")).strip()
                 })
-    except Exception:
-        pass
+    except Exception as e:
+        st.warning(f"Timestamp detection notice ({model_name}): {e}")
 
     # Guarantee at least `num_shorts` clips even if video is short or AI returned fewer
     if len(cleaned) < num_shorts:
@@ -688,7 +768,7 @@ if uploaded_file is not None:
         if multi_shorts_mode:
             generated_shorts_info = []
 
-            with st.status(f"Scanning Video & Generating {num_shorts_to_make} Separate Shorts...", expanded=True) as status:
+            with st.status(f"Scanning Video with `{primary_gemini_model}` & Generating {num_shorts_to_make} Separate Shorts...", expanded=True) as status:
                 orig_duration = get_file_duration(temp_video)
                 st.write(f"⏱️ Source Video Duration: **{orig_duration:.2f} seconds**")
 
@@ -709,13 +789,13 @@ if uploaded_file is not None:
 
                 st.write(f"🔎 Finding the **{num_shorts_to_make}** most interesting moments (~{each_short_duration}s each)...")
                 moments = find_multiple_short_moments(
-                    client, video_file, orig_duration, num_shorts_to_make, each_short_duration, match_context
+                    client, primary_gemini_model, video_file, orig_duration, num_shorts_to_make, each_short_duration, match_context
                 )
 
-                try:
-                    client.files.delete(name=video_file.name)
-                except Exception:
-                    pass
+                # Keep video_file alive until all scripts are generated
+                video_part_for_shorts = types.Part(
+                    file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
+                )
 
                 # Process each moment into its own separate MP4 Short
                 for idx, m in enumerate(moments, start=1):
@@ -737,14 +817,16 @@ if uploaded_file is not None:
                     script_text = ""
                     if add_voiceover_on_short:
                         st.write(f"🎙️ Writing & synthesizing `{multi_shorts_voiceover_style}` commentary for Short #{idx}...")
+                        time.sleep(1.5)
                         script_text = generate_commentary_script(
                             client=client,
-                            video_source_part=None,
+                            model_name=primary_gemini_model,
+                            video_source_part=video_part_for_shorts,
                             duration_sec=clip_dur,
                             style_name=multi_shorts_voiceover_style,
                             voice_info=selected_voice_info,
                             context_hint=match_context,
-                            moment_desc=f"{m['title']} - {m['reason']}",
+                            moment_desc=f"Clip from {st_t:.1f}s to {end_t:.1f}s: {m['title']} - {m['reason']}",
                         )
                         short_voice_raw = f"generated_voice_{idx}.wav"
                         short_voice_fit = f"fitted_voice_{idx}.wav"
@@ -768,6 +850,12 @@ if uploaded_file is not None:
                         "script": script_text,
                         "path": final_short_path,
                     })
+
+                # Delete the remote file only after all shorts have finished
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
 
                 status.update(label=f"✅ Successfully generated {len(generated_shorts_info)} separate Shorts!", state="complete")
 
@@ -794,7 +882,7 @@ if uploaded_file is not None:
         # MODE 2: SINGLE VIDEO DIRECT MULTIMODAL COMMENTARY & VOICEOVER HOOK
         # =========================================================================
         else:
-            with st.status("Analyzing Video & Generating Scene-Synced Voiceover...", expanded=True) as status:
+            with st.status(f"Analyzing Video with `{primary_gemini_model}` & Generating Scene-Synced Voiceover...", expanded=True) as status:
                 video_duration = get_file_duration(temp_video)
                 st.write(f"⏱️ Video Duration: **{video_duration:.2f} seconds**")
 
@@ -821,6 +909,7 @@ if uploaded_file is not None:
                 st.write(f"✍️ Generating scene-synced script (`{script_style}`)...")
                 generated_script = generate_commentary_script(
                     client=client,
+                    model_name=primary_gemini_model,
                     video_source_part=video_part,
                     duration_sec=video_duration,
                     style_name=script_style,
