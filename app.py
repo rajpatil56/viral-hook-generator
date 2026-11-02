@@ -495,4 +495,283 @@ def find_multiple_short_moments(client, video_file, video_duration: float, num_s
             if end_t - st_t < 2.0 and st_t > 2.0:
                 st_t = max(0.0, end_t - effective_clip_dur)
             if end_t - st_t >= 1.5:
-                cleaned.append(
+                cleaned.append({
+                    "title": str(item.get("title", f"Viral Short #{idx + 1}")).strip(),
+                    "start": round(st_t, 2),
+                    "end": round(end_t, 2),
+                    "reason": str(item.get("reason", "Exciting highlight moment")).strip()
+                })
+    except Exception:
+        pass
+
+    # Guarantee at least `num_shorts` clips even if video is short or AI returned fewer
+    if len(cleaned) < num_shorts:
+        step = video_duration / float(num_shorts)
+        for i in range(len(cleaned), num_shorts):
+            st_t = round(i * step, 2)
+            end_t = round(min(video_duration, st_t + effective_clip_dur), 2)
+            if end_t - st_t < 1.5:
+                st_t = round(max(0.0, video_duration - effective_clip_dur), 2)
+                end_t = round(video_duration, 2)
+            cleaned.append({
+                "title": f"Highlight Short #{i + 1}",
+                "start": st_t,
+                "end": end_t,
+                "reason": f"Key action segment #{i + 1} from the video"
+            })
+
+    return cleaned[:num_shorts]
+
+
+def extract_single_short_ffmpeg(input_video: str, start_t: float, end_t: float, output_path: str, vertical_916: bool = True) -> bool:
+    """Cuts a single standalone Short from `input_video` between `start_t` and `end_t` with zero captions."""
+    dur = max(1.5, round(end_t - start_t, 2))
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_t),
+        "-t", str(dur),
+        "-i", input_video,
+    ]
+    if vertical_916:
+        vf_str = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,format=yuv420p"
+        cmd.extend(["-vf", vf_str])
+    else:
+        cmd.extend(["-pix_fmt", "yuv420p"])
+
+    if has_audio_stream(input_video):
+        cmd.extend([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            output_path
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-an",
+            output_path
+        ])
+
+    subprocess.run(cmd, capture_output=True, check=True)
+    return os.path.exists(output_path)
+
+
+# --- MAIN PAGE EXECUTION ---
+uploaded_file = st.file_uploader("Upload MP4 Video File", type=["mp4"])
+
+if uploaded_file is not None:
+    temp_video = "temp_input.mp4"
+    script_audio = "generated_voice.wav"
+    fitted_audio = "fitted_voice.wav"
+    output_video = "output_hooked.mp4"
+
+    with open(temp_video, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    st.video(temp_video)
+
+    btn_label = (
+        f"🔥 Find Best Moments & Convert into {num_shorts_to_make} Separate Shorts"
+        if multi_shorts_mode
+        else "🚀 Analyze Video & Overlay Viral Hook"
+    )
+
+    if st.button(btn_label):
+        api_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
+        if not api_key:
+            st.error("Please enter your Gemini API Key in the sidebar.")
+            st.stop()
+        if not api_key.isascii() or len(api_key) > 100 or any(c.isspace() for c in api_key):
+            st.error(
+                f"The Gemini API key looks wrong: {len(api_key)} characters, "
+                f"{'contains non-English characters' if not api_key.isascii() else 'unexpected length/spaces'}. "
+                "A real key is ~39 characters starting with 'AIza'. Clear the sidebar field "
+                "(and check the GEMINI_API_KEY environment variable) and paste only the key from Google AI Studio."
+            )
+            st.stop()
+
+        cleanup_temp_files()
+        with open(temp_video, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        client = genai.Client(api_key=api_key)
+
+        # =========================================================================
+        # MODE 1: AUTO MULTI-SHORTS EXTRACTOR (3+ SEPARATE SHORTS, NO JOINING)
+        # =========================================================================
+        if multi_shorts_mode:
+            generated_shorts_info = []
+
+            with st.status(f"Scanning Video & Generating {num_shorts_to_make} Separate Shorts...", expanded=True) as status:
+                orig_duration = get_file_duration(temp_video)
+                st.write(f"⏱️ Source Video Duration: **{orig_duration:.2f} seconds**")
+
+                st.write("📹 Uploading video to Gemini to detect the top viral moments...")
+                try:
+                    video_file = client.files.upload(file=temp_video)
+                except Exception as e:
+                    st.error(f"Authentication or Upload Error: {e}")
+                    st.stop()
+
+                while get_file_state_str(video_file) in ["PROCESSING", "PENDING"]:
+                    time.sleep(2)
+                    video_file = client.files.get(name=video_file.name)
+
+                if get_file_state_str(video_file) != "ACTIVE":
+                    st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
+                    st.stop()
+
+                st.write(f"🔎 Finding the **{num_shorts_to_make}** most interesting moments (~{each_short_duration}s each)...")
+                moments = find_multiple_short_moments(
+                    client, video_file, orig_duration, num_shorts_to_make, each_short_duration, match_context
+                )
+
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
+
+                # Process each moment into its own separate MP4 Short
+                for idx, m in enumerate(moments, start=1):
+                    st_t = m["start"]
+                    end_t = m["end"]
+                    clip_dur = round(end_t - st_t, 2)
+                    raw_short_path = f"raw_short_{idx}.mp4"
+                    final_short_path = f"extracted_short_{idx}.mp4"
+
+                    st.write(f"✂️ **Short #{idx}: {m['title']}** (`{st_t:.1f}s` → `{end_t:.1f}s` | `{clip_dur:.1f}s`)")
+                    extract_single_short_ffmpeg(
+                        input_video=temp_video,
+                        start_t=st_t,
+                        end_t=end_t,
+                        output_path=raw_short_path if add_voiceover_on_short else final_short_path,
+                        vertical_916=convert_vertical_916,
+                    )
+
+                    script_text = ""
+                    if add_voiceover_on_short:
+                        st.write(f"🎙️ Writing & synthesizing commentary for Short #{idx}...")
+                        script_text = generate_commentary_script(
+                            client=client,
+                            video_source_part=None,
+                            duration_sec=clip_dur,
+                            style_name="Sidhu Paaji Commentary",
+                            voice_info=selected_voice_info,
+                            context_hint=match_context,
+                            moment_desc=f"{m['title']} - {m['reason']}",
+                        )
+                        short_voice_raw = f"generated_voice_{idx}.wav"
+                        short_voice_fit = f"fitted_voice_{idx}.wav"
+                        synthesize_speech_unified(client, script_text, selected_voice_info, short_voice_raw)
+                        fit_and_mix_voiceover(
+                            input_video=raw_short_path,
+                            raw_voice_path=short_voice_raw,
+                            fitted_voice_path=short_voice_fit,
+                            output_video=final_short_path,
+                            target_duration=clip_dur,
+                            base_speed=voice_speed,
+                            auto_fit=auto_fit_audio,
+                        )
+
+                    generated_shorts_info.append({
+                        "index": idx,
+                        "title": m["title"],
+                        "start": st_t,
+                        "end": end_t,
+                        "reason": m["reason"],
+                        "script": script_text,
+                        "path": final_short_path,
+                    })
+
+                status.update(label=f"✅ Successfully generated {len(generated_shorts_info)} separate Shorts!", state="complete")
+
+            st.subheader(f"📱 Generated Shorts ({len(generated_shorts_info)} Separate Videos)")
+            cols = st.columns(min(3, len(generated_shorts_info)))
+            for i, info in enumerate(generated_shorts_info):
+                with cols[i % len(cols)]:
+                    st.markdown(f"#### #{info['index']}: {info['title']}")
+                    st.caption(f"⏱️ `{info['start']:.1f}s - {info['end']:.1f}s` | {info['reason']}")
+                    if info["script"]:
+                        st.info(f"🗣️ **Commentary:** {info['script']}")
+                    if os.path.exists(info["path"]):
+                        st.video(info["path"])
+                        with open(info["path"], "rb") as vf:
+                            st.download_button(
+                                label=f"⬇️ Download Short #{info['index']}",
+                                data=vf,
+                                file_name=f"short_{info['index']}.mp4",
+                                mime="video/mp4",
+                                key=f"dl_short_{info['index']}",
+                            )
+
+        # =========================================================================
+        # MODE 2: SINGLE VIDEO DIRECT MULTIMODAL COMMENTARY & VOICEOVER HOOK
+        # =========================================================================
+        else:
+            with st.status("Analyzing Video & Generating Scene-Synced Voiceover...", expanded=True) as status:
+                video_duration = get_file_duration(temp_video)
+                st.write(f"⏱️ Video Duration: **{video_duration:.2f} seconds**")
+
+                st.write("📹 Uploading video to Gemini...")
+                try:
+                    video_file = client.files.upload(file=temp_video)
+                except Exception as e:
+                    st.error(f"Authentication or Upload Error: {e}")
+                    st.stop()
+
+                while get_file_state_str(video_file) in ["PROCESSING", "PENDING"]:
+                    time.sleep(2)
+                    video_file = client.files.get(name=video_file.name)
+
+                if get_file_state_str(video_file) != "ACTIVE":
+                    st.error(f"Gemini failed to process video. State: {get_file_state_str(video_file)}")
+                    st.stop()
+
+                video_part = types.Part(
+                    file_data=types.FileData(file_uri=video_file.uri, mime_type=video_file.mime_type or "video/mp4"),
+                    video_metadata=types.VideoMetadata(fps=2 if video_duration <= 90 else 1),
+                )
+
+                st.write("✍️ Generating scene-synced script...")
+                generated_script = generate_commentary_script(
+                    client=client,
+                    video_source_part=video_part,
+                    duration_sec=video_duration,
+                    style_name=script_style,
+                    voice_info=selected_voice_info,
+                    context_hint=match_context,
+                )
+
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
+
+                st.write(f"🗣️ Synthesizing voiceover (`{selected_voice_label}`)...")
+                synthesize_speech_unified(client, generated_script, selected_voice_info, script_audio)
+
+                st.write("🎬 Mixing audio & syncing with video via FFmpeg...")
+                fit_and_mix_voiceover(
+                    input_video=temp_video,
+                    raw_voice_path=script_audio,
+                    fitted_voice_path=fitted_audio,
+                    output_video=output_video,
+                    target_duration=video_duration,
+                    base_speed=voice_speed,
+                    auto_fit=auto_fit_audio,
+                )
+
+                status.update(label="✅ Video Commentary Ready!", state="complete")
+
+            st.subheader("📝 Generated Script")
+            st.success(generated_script)
+
+            if os.path.exists(output_video):
+                st.subheader("🎬 Final Output Video")
+                st.video(output_video)
+                with open(output_video, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Download Final Hooked Video",
+                        data=f,
+                        file_name="sidhu_commentary_output.mp4",
+                        mime="video/mp4",
+                    )
