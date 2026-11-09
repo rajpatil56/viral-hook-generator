@@ -500,5 +500,75 @@ if uploaded_video:
                     st.divider()
                     st.subheader(f"🔥 Short #{short_num}: {title} (`{start_str}` - `{end_str}`)")
                     st.caption(f"**Visual Scene:** {visual_summary}")
+                                        # Case A: Keep Original Audio Only
+                    if not selected_extractor_styles or "Keep Original Video Audio Only" in audio_choice:
+                        out_video_path = os.path.join(temp_dir, f"short_{short_num}_original.mp4")
+                        with st.spinner(f"Cutting Short #{short_num} (Original Audio)..."):
+                            process_video_clip(
+                                input_video=source_video_path,
+                                start_sec=start_sec,
+                                end_sec=end_sec,
+                                output_path=out_video_path,
+                                make_vertical=convert_vertical,
+                                tts_audio_path=None
+                            )
+                        if os.path.exists(out_video_path):
+                            v_col, d_col = st.columns([1, 2])
+                            with v_col:
+                                st.video(out_video_path)
+                            with d_col:
+                                with open(out_video_path, "rb") as vf:
+                                    st.download_button(
+                                        label=f"⬇️ Download Short #{short_num} (Original Audio)",
+                                        data=vf.read(),
+                                        file_name=f"short_{short_num}_original.mp4",
+                                        mime="video/mp4",
+                                        key=f"dl_orig_{short_num}"
+                                    )
+
+                    # Case B: Overlay AI Voiceover for Each Selected Mode
+                    else:
+                        for mode_idx, (mode_name, script_text) in enumerate(scripts_dict.items()):
+                            with st.expander(f"🎙️ Mode: {mode_name}", expanded=True):
+                                tts_path = os.path.join(temp_dir, f"tts_{short_num}_{mode_idx}.mp3")
+                                out_video_path = os.path.join(temp_dir, f"short_{short_num}_mode_{mode_idx}.mp4")
+
+                                with st.spinner(f"Generating '{mode_name}' voiceover & rendering Short #{short_num}..."):
+                                    generate_tts_bulletproof(
+                                        text=script_text,
+                                        voice_cfg=selected_voice_cfg,
+                                        output_audio_path=tts_path,
+                                        api_key=gemini_api_key,
+                                        prefer_gemini=prefer_gemini_tts
+                                    )
+                                    process_video_clip(
+                                        input_video=source_video_path,
+                                        start_sec=start_sec,
+                                        end_sec=end_sec,
+                                        output_path=out_video_path,
+                                        make_vertical=convert_vertical,
+                                        tts_audio_path=tts_path
+                                    )
+
+                                c1, c2 = st.columns([1, 2])
+                                with c1:
+                                    if os.path.exists(out_video_path):
+                                        st.video(out_video_path)
+                                with c2:
+                                    st.markdown("**Generated Makeover Script:**")
+                                    st.info(script_text)
+                                    if os.path.exists(out_video_path):
+                                        with open(out_video_path, "rb") as vf:
+                                            st.download_button(
+                                                label=f"⬇️ Download Short #{short_num} ({mode_name.split('(')[0].strip()})",
+                                                data=vf.read(),
+                                                file_name=f"short_{short_num}_{mode_idx}.mp4",
+                                                mime="video/mp4",
+                                                key=f"dl_{short_num}_{mode_idx}"
+                                            )
+
+            except Exception as e:
+                st.error(f"Error processing video: {e}")
+
 
       
