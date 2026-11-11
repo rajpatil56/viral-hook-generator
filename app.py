@@ -65,77 +65,69 @@ SCRIPT_STYLES = {
 }
 
 VOICE_OPTIONS = {
-    # --- HINDI ---
-    "Hindi Male - Madhur (Edge-TTS)": {
-        "edge": "hi-IN-MadhurNeural",
-        "gemini": "Puck",
-        "gtts_lang": "hi",
-        "gtts_tld": "co.in"
-    },
-    "Hindi Female - Swara (Edge-TTS)": {
-        "edge": "hi-IN-SwaraNeural",
-        "gemini": "Aoede",
-        "gtts_lang": "hi",
-        "gtts_tld": "co.in"
-    },
-    
-    # --- MARATHI ---
-    "Marathi Male - Manohar (Edge-TTS)": {
-        "edge": "mr-IN-ManoharNeural",
-        "gemini": "Charon",
-        "gtts_lang": "mr",
-        "gtts_tld": "co.in"
-    },
-    "Marathi Female - Aarohi (Edge-TTS)": {
-        "edge": "mr-IN-AarohiNeural",
-        "gemini": "Kore",
-        "gtts_lang": "mr",
-        "gtts_tld": "co.in"
-    },
-
-    # --- ENGLISH (INDIA) ---
-    "Indian English Male - Prabhat (Edge-TTS)": {
-        "edge": "en-IN-PrabhatNeural",
-        "gemini": "Charon",
-        "gtts_lang": "en",
-        "gtts_tld": "co.in"
-    },
-    "Indian English Female - Neerja (Edge-TTS)": {
-        "edge": "en-IN-NeerjaNeural",
-        "gemini": "Kore",
-        "gtts_lang": "en",
-        "gtts_tld": "co.in"
-    },
-
-    # --- GEMINI NATIVE VOICES ---
+    # --- GEMINI NATIVE STUDIO VOICES ---
     "Gemini Native: Charon (Deep, Crisp Male)": {
+        "engine": "gemini",
+        "gemini_voice": "Charon",
         "edge": "en-IN-PrabhatNeural",
-        "gemini": "Charon",
         "gtts_lang": "en",
         "gtts_tld": "co.in"
     },
     "Gemini Native: Fenrir (Viral, Deep US Male)": {
+        "engine": "gemini",
+        "gemini_voice": "Fenrir",
         "edge": "en-US-ChristopherNeural",
-        "gemini": "Fenrir",
         "gtts_lang": "en",
         "gtts_tld": "com"
     },
     "Gemini Native: Puck (Energetic Male)": {
+        "engine": "gemini",
+        "gemini_voice": "Puck",
         "edge": "hi-IN-MadhurNeural",
-        "gemini": "Puck",
         "gtts_lang": "hi",
         "gtts_tld": "co.in"
     },
     "Gemini Native: Aoede (Clear Female)": {
+        "engine": "gemini",
+        "gemini_voice": "Aoede",
         "edge": "hi-IN-SwaraNeural",
-        "gemini": "Aoede",
         "gtts_lang": "hi",
         "gtts_tld": "co.in"
     },
     "Gemini Native: Kore (Expressive Female)": {
+        "engine": "gemini",
+        "gemini_voice": "Kore",
         "edge": "en-IN-NeerjaNeural",
-        "gemini": "Kore",
         "gtts_lang": "en",
+        "gtts_tld": "co.in"
+    },
+    # --- EDGE-TTS MULTILINGUAL NEURAL VOICES ---
+    "Edge-TTS: Hindi Male (Madhur)": {
+        "engine": "edge",
+        "gemini_voice": "Puck",
+        "edge": "hi-IN-MadhurNeural",
+        "gtts_lang": "hi",
+        "gtts_tld": "co.in"
+    },
+    "Edge-TTS: Hindi Female (Swara)": {
+        "engine": "edge",
+        "gemini_voice": "Aoede",
+        "edge": "hi-IN-SwaraNeural",
+        "gtts_lang": "hi",
+        "gtts_tld": "co.in"
+    },
+    "Edge-TTS: Marathi Male (Manohar)": {
+        "engine": "edge",
+        "gemini_voice": "Charon",
+        "edge": "mr-IN-ManoharNeural",
+        "gtts_lang": "mr",
+        "gtts_tld": "co.in"
+    },
+    "Edge-TTS: Marathi Female (Aarohi)": {
+        "engine": "edge",
+        "gemini_voice": "Kore",
+        "edge": "mr-IN-AarohiNeural",
+        "gtts_lang": "mr",
         "gtts_tld": "co.in"
     }
 }
@@ -160,23 +152,14 @@ with st.sidebar:
     audio_choice = st.radio(
         "🔊 Audio Output Mode",
         [
-            "Overlay AI Voiceover on Video",
+            "Overlay AI Voiceover on Video Pipeline",
             "Keep Original Video Audio Only"
         ],
         index=0
     )
 
     st.divider()
-    tts_engine_preference = st.selectbox(
-        "⚙️ Primary Voice Engine",
-        [
-            "Edge-TTS First (Best for Multilingual Hindi/Marathi/English)",
-            "Gemini Native TTS First (Charon, Fenrir, Puck, etc.)"
-        ],
-        index=0
-    )
-    
-    selected_voice_label = st.selectbox("🎙️ Voice Model & Language", list(VOICE_OPTIONS.keys()))
+    selected_voice_label = st.selectbox("🎙️ Voice Model (Gemini AI & Multilingual)", list(VOICE_OPTIONS.keys()))
     selected_voice_cfg = VOICE_OPTIONS[selected_voice_label]
 
     language_instruction = st.selectbox(
@@ -191,72 +174,72 @@ with st.sidebar:
 
 
 # ==========================================
-# 3. BULLETPROOF 3-TIER TTS ENGINE
+# 3. PIPELINE TTS GENERATOR (GEMINI & EDGE)
 # ==========================================
 def clean_script_for_tts(text: str) -> str:
-    """Removes markdown, stage directions, and emojis that trigger TTS ClientError."""
+    """Removes markdown, stage directions, and emojis that trigger TTS errors."""
     text = re.sub(r"\[.*?\]|\(.*?\)|\*+", "", text)
     text = re.sub(r"^(Narrator|Voiceover|Speaker|Audio|Script)\s*:\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip()
     return text or "Watch this amazing moment right now!"
 
 
-def generate_tts_bulletproof(
+def generate_pipeline_tts(
     text: str,
     voice_cfg: dict,
     output_audio_path: str,
-    api_key: str,
-    prefer_gemini: bool = False
+    api_key: str
 ) -> bool:
     """
-    3-Tier TTS Generator:
-    1. Optional Gemini Native TTS
-    2. Subprocess CLI Edge-TTS (Supports Hindi, Marathi, English Neural voices)
-    3. gTTS + FFmpeg speed boost fallback
+    Pipeline TTS Execution:
+    1. Gemini 3.8 Flash TTS Pipeline (Charon, Fenrir, Puck, Aoede, Kore)
+    2. Edge-TTS Multilingual Fallback
+    3. gTTS Fallback
     """
     clean_text = clean_script_for_tts(text)
 
-    # --- TIER 1: GEMINI NATIVE TTS (If preferred) ---
-    if prefer_gemini and USING_NEW_SDK and api_key:
+    # --- PIPELINE TIER 1: GEMINI NATIVE TTS API ---
+    if voice_cfg["engine"] == "gemini" and USING_NEW_SDK and api_key:
         try:
             client = genai.Client(api_key=api_key.strip())
-            tts_resp = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",  # Or updated flagship tts endpoint
-                contents=f"Read this script with high energy and natural pacing: {clean_text}",
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_cfg["gemini"]
-                            )
-                        )
-                    )
+            # Using the native Gemini Interactions / TTS generation pipeline
+            interaction = client.interactions.create(
+                model="gemini-3.8-flash-tts",
+                input=[{
+                    "type": "user_input",
+                    "content": [{
+                        "type": "text",
+                        "text": f"Read this viral video voiceover script with high energy, natural pacing, and sharp dramatic pauses: {clean_text}"
+                    }]
+                }],
+                response_format={"type": "audio"},
+                generation_config={
+                    "speech_config": [
+                        {"voice": voice_cfg["gemini_voice"]}
+                    ]
+                }
+            )
+            
+            if hasattr(interaction, "output_audio") and interaction.output_audio:
+                pcm_bytes = base64.b64decode(interaction.output_audio.data)
+                wav_temp = output_audio_path + ".wav"
+                
+                with wave.open(wav_temp, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(24000)
+                    wf.writeframes(pcm_bytes)
+
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", wav_temp, "-c:a", "libmp3lame", "-q:a", "2", output_audio_path],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
-            )
-            inline_data = tts_resp.candidates[0].content.parts[0].inline_data
-            pcm_bytes = inline_data.data
-            if isinstance(pcm_bytes, str):
-                pcm_bytes = base64.b64decode(pcm_bytes)
-
-            wav_temp = output_audio_path + ".wav"
-            with wave.open(wav_temp, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes(pcm_bytes)
-
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", wav_temp, "-c:a", "libmp3lame", "-q:a", "2", output_audio_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            if os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 500:
-                time.sleep(1)
-                return True
+                if os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 500:
+                    return True
         except Exception as e:
-            st.caption(f"ℹ️ Gemini TTS skipped ({type(e).__name__}), falling back to Edge-TTS...")
+            st.caption(f"ℹ️ Gemini Native TTS pipeline note ({type(e).__name__}), shifting to Edge-TTS neural fallback...")
 
-    # --- TIER 2: SUBPROCESS CLI EDGE-TTS ---
+    # --- PIPELINE TIER 2: EDGE-TTS NEURAL VOICES ---
     try:
         edge_cmd = [
             "edge-tts",
@@ -271,7 +254,7 @@ def generate_tts_bulletproof(
     except Exception:
         pass
 
-    # --- TIER 3: gTTS FALLBACK ---
+    # --- PIPELINE TIER 3: GTTS FALLBACK ---
     try:
         raw_gtts_path = output_audio_path + "_raw.mp3"
         tts = gTTS(text=clean_text, lang=voice_cfg["gtts_lang"], tld=voice_cfg["gtts_tld"], slow=False)
@@ -284,13 +267,13 @@ def generate_tts_bulletproof(
         if os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 300:
             return True
     except Exception as e:
-        st.error(f"All TTS engines failed: {e}")
+        st.error(f"All TTS pipeline tiers failed: {e}")
 
     return False
 
 
 # ==========================================
-# 4. VIDEO PROCESSING & GEMINI ANALYSIS
+# 4. VIDEO PROCESSING & GEMINI ANALYSIS PIPELINE
 # ==========================================
 def process_video_clip(
     input_video: str,
@@ -348,9 +331,9 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
 
     prompt = f"""
     You are an expert viral Shorts producer and scriptwriter.
-    Watch the uploaded video carefully, observing the exact visual actions, reactions, and pacing.
+    Watch the uploaded video frame by frame, observing the exact visual actions, expressions, and pacing.
     
-    Task: Write a high-retention voiceover script for this video using the following style:
+    Task: Write a high-retention voiceover script tailored precisely to what happens visually using this style:
     - **{style_name}**: {style_prompt}
 
     Language Requirement: Write the spoken script in {lang_choice}.
@@ -364,7 +347,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
     }}
     """
 
-    st.info("📤 Uploading video to Gemini Vision (using gemini-3.8-flash) for script generation...")
+    st.info("📤 Step 1/3: Uploading video to Gemini 3.8 Flash Vision for scene & action analysis...")
 
     if USING_NEW_SDK:
         client = genai.Client(api_key=clean_key)
@@ -376,7 +359,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
             raise RuntimeError("Gemini video processing failed.")
 
         response = client.models.generate_content(
-            model="gemini-3.8-flash",  # Updated to latest flagship flash model
+            model="gemini-3.8-flash",
             contents=[uploaded_file, prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
@@ -403,10 +386,10 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
 
 
 # ==========================================
-# 5. MAIN APP UI & EXECUTION FLOW
+# 5. MAIN APP UI & EXECUTION PIPELINE
 # ==========================================
-st.title("🎬 AI Script Makeover & Voiceover Studio")
-st.caption("Powered by Gemini 3.8 Flash with multilingual neural voices (Hindi, Marathi, English).")
+st.title("🎬 AI Script Makeover & Voice Pipeline Studio")
+st.caption("Pipeline: Gemini Video Vision Analysis ➔ Custom Viral Script ➔ Gemini 3.8 Flash Native Studio Voices.")
 
 uploaded_video = st.file_uploader("Upload Video (MP4, MOV, MKV, WebM)", type=["mp4", "mov", "mkv", "webm"])
 
@@ -415,13 +398,13 @@ if uploaded_video:
     with col_preview:
         st.video(uploaded_video)
     with col_info:
-        st.markdown("### Active Configuration")
+        st.markdown("### Pipeline Configuration")
         st.write(f"**Script Style:** `{selected_style}`")
         st.write(f"**9:16 Vertical Crop:** `{'Enabled (720x1280)' if convert_vertical else 'Disabled'}`")
-        st.write(f"**Voice Model:** `{selected_voice_label}`")
+        st.write(f"**Selected Voice Engine:** `{selected_voice_label}`")
         st.write(f"**Audio Mode:** `{audio_choice}`")
 
-    if st.button("🚀 Generate AI Voiceover & Makeover", type="primary", use_container_width=True):
+    if st.button("🚀 Run AI Video-to-Voice Pipeline", type="primary", use_container_width=True):
         if not gemini_api_key:
             st.error("Please enter your Gemini API Key in the left sidebar.")
             st.stop()
@@ -431,10 +414,9 @@ if uploaded_video:
             with open(source_video_path, "wb") as f:
                 f.write(uploaded_video.read())
 
-            prefer_gemini_tts = ("Gemini Native TTS" in tts_engine_preference)
-
             try:
-                with st.spinner("🧠 Gemini 3.8 Flash is analyzing your video and crafting the script makeover..."):
+                # PIPELINE STAGE 1: Gemini Vision Scene Analysis & Script Generation
+                with st.spinner("🧠 Pipeline Stage 1/3: Gemini 3.8 Flash analyzing video frames & writing script..."):
                     analysis_result = analyze_video_with_gemini(
                         api_key=gemini_api_key,
                         video_path=source_video_path,
@@ -446,29 +428,32 @@ if uploaded_video:
                 visual_summary = analysis_result.get("visual_summary", "")
                 script_text = analysis_result.get("script", "")
 
-                st.success("✅ Script makeover generated successfully!")
+                st.success("✅ Script successfully generated from video actions!")
                 
                 st.subheader(f"📝 Generated Script ({selected_style})")
                 st.info(script_text)
-                st.caption(f"**Visual Scene:** {visual_summary}")
+                st.caption(f"**Visual Context Captured:** {visual_summary}")
 
                 audio_path = None
-                if "Overlay AI Voiceover" in audio_choice:
+                if "Pipeline" in audio_choice:
                     audio_path = os.path.join(temp_dir, "voiceover.mp3")
-                    with st.spinner(f"🎙️ Synthesizing voiceover using `{selected_voice_label}`..."):
-                        success_tts = generate_tts_bulletproof(
+                    
+                    # PIPELINE STAGE 2: Gemini Native Voice Synthesis Pipeline
+                    with st.spinner(f"🎙️ Pipeline Stage 2/3: Converting script into natural speech via `{selected_voice_label}`..."):
+                        success_tts = generate_pipeline_tts(
                             text=script_text,
                             voice_cfg=selected_voice_cfg,
                             output_audio_path=audio_path,
-                            api_key=gemini_api_key,
-                            prefer_gemini=prefer_gemini_tts
+                            api_key=gemini_api_key
                         )
                         if not success_tts:
-                            st.warning("⚠️ AI Voice synthesis encountered an issue. Exporting video with original audio.")
+                            st.warning("⚠️ Voice generation encountered a snag. Exporting video with original audio.")
                             audio_path = None
 
                 output_video_path = os.path.join(temp_dir, "output_viral_short.mp4")
-                with st.spinner("🎞️ Processing video formatting and audio mixing via FFmpeg..."):
+                
+                # PIPELINE STAGE 3: FFmpeg Audio Mixing & Formatting
+                with st.spinner("🎞️ Pipeline Stage 3/3: Mixing AI voiceover audio & formatting video via FFmpeg..."):
                     process_video_clip(
                         input_video=source_video_path,
                         output_path=output_video_path,
@@ -477,20 +462,20 @@ if uploaded_video:
                     )
 
                 st.divider()
-                st.subheader("🔥 Your Rendered Viral Short")
+                st.subheader("🔥 Your Final Pipeline-Rendered Viral Short")
                 if os.path.exists(output_video_path):
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
                         st.download_button(
-                            label="📥 Download Viral Short",
+                            label="📥 Download Pipeline Short",
                             data=f,
-                            file_name="viral_short_makeover.mp4",
+                            file_name="viral_short_pipeline.mp4",
                             mime="video/mp4",
                             use_container_width=True
                         )
                 else:
-                    st.error("Video processing failed to generate output file.")
+                    st.error("Video processing pipeline failed to generate output file.")
 
             except Exception as e:
-                st.error(f"An error occurred during processing: {e}")
+                st.error(f"Pipeline error occurred during execution: {e}")
                 
