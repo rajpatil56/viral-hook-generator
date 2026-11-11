@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import glob
 import time
 import wave
@@ -11,10 +13,10 @@ from google import genai
 from google.genai import types
 
 st.set_page_config(page_title="Multimodal Video Hook Generator", layout="wide")
-st.title("🎬 Direct Multimodal Video Hook Overlay")
+st.title("🎬 Frame-Synced Multimodal Video Hook & Voiceover Studio")
 
 # Sidebar Configuration
-st.sidebar.header("Settings")
+st.sidebar.header("⚙️ Settings")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get a key from Google AI Studio")
 
 # Integrated Voice Roster
@@ -37,21 +39,14 @@ VOICE_OPTIONS = {
     "Edge - English Male (Guy)": {"engine": "edge", "code": "en-US-GuyNeural", "lang": "English", "script_type": "English text"},
 }
 
-selected_voice_label = st.sidebar.selectbox("Voice Model & Language", list(VOICE_OPTIONS.keys()))
+selected_voice_label = st.sidebar.selectbox("🎙️ Voice Model & Language", list(VOICE_OPTIONS.keys()))
 selected_voice_info = VOICE_OPTIONS[selected_voice_label]
 
-voice_speed = st.sidebar.slider(
-    "⚡ Voice Delivery Speed Multiplier", 
-    min_value=1.0, 
-    max_value=1.8, 
-    value=1.22, 
-    step=0.01,
-    help="1.20x-1.25x is the sweet spot for reel commentary."
-)
-
 script_style = st.sidebar.selectbox(
-    "Hook / Script Style",
+    "🎨 Hook / Script Style",
     [
+        "Sidhu Paaji Commentary (Oye Guru! Thoko Taali)",
+        "Soul Lines Paaji Mode (Hook-Hero-Roast-Closer)",
         "High-Dopamine Viral Opening", 
         "Viral Explanation Mode (Hook-Scoop-Twist)", 
         "Cinematic Storytelling", 
@@ -60,14 +55,36 @@ script_style = st.sidebar.selectbox(
     ]
 )
 
+st.sidebar.divider()
+sync_mode = st.sidebar.radio(
+    "🎯 Audio-Video Sync Mode",
+    [
+        "Timestamped Beat Sync (Locks voice lines to exact scene timestamps)",
+        "Exact Duration Lock (Stretches/fits 1 continuous script to exact video length)"
+    ],
+    index=0,
+    help="Timestamped Beat Sync ensures the voice never talks about a scene before it actually happens on screen."
+)
+
+auto_adjust_video_speed = st.sidebar.checkbox(
+    "🎞️ Allow slight video speed adjustment if voice is too long",
+    value=False,
+    help="If checked, slightly slows down the video instead of rushing the voice when the script has too many words."
+)
+
+
 def cleanup_temp_files():
-    patterns = ["temp_input.mp4", "generated_voice.*", "fitted_voice.wav", "output_hooked.mp4"]
+    patterns = [
+        "temp_input.mp4", "generated_voice.*", "fitted_voice.wav",
+        "beat_*.wav", "beat_*.mp3", "output_hooked.mp4"
+    ]
     for pattern in patterns:
         for file in glob.glob(pattern):
             try:
                 os.remove(file)
             except OSError:
                 pass
+
 
 def get_file_duration(file_path: str) -> float:
     cmd = [
@@ -77,18 +94,29 @@ def get_file_duration(file_path: str) -> float:
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return float(res.stdout.strip())
 
+
 def get_file_state_str(file_obj):
     state = getattr(file_obj, "state", None)
     if hasattr(state, "name"):
         return state.name
     return str(state).upper()
 
+
+def build_atempo_filter(tempo: float) -> str:
+    """Builds a safe FFmpeg atempo chain for any speed between 0.5x and 3.0x."""
+    tempo = max(0.5, min(tempo, 3.0))
+    filters = []
+    while tempo > 2.0:
+        filters.append("atempo=2.0")
+        tempo /= 2.0
+    while tempo < 0.5:
+        filters.append("atempo=0.5")
+        tempo /= 0.5
+    filters.append(f"atempo={tempo:.4f}")
+    return ",".join(filters)
+
+
 def save_gemini_audio_properly(raw_bytes: bytes, output_wav_path: str):
-    """
-    Saves Gemini audio output properly as a valid WAV file.
-    - If Gemini 3.8 Interactions API returns a full WAV (starts with b'RIFF'), write directly.
-    - If Gemini returns raw 24kHz 16-bit mono PCM bytes, wrap it in a WAV header so ffprobe works.
-    """
     if isinstance(raw_bytes, str):
         raw_bytes = base64.b64decode(raw_bytes)
 
@@ -98,11 +126,11 @@ def save_gemini_audio_properly(raw_bytes: bytes, output_wav_path: str):
     else:
         with wave.open(output_wav_path, "wb") as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setsampwidth(2)
             wf.setframerate(24000)
             wf.writeframes(raw_bytes)
 
-# Robust API Call Wrapper: Handles 429 Rate Limits AND 503 Server Demand Spikes
+
 def generate_content_with_retry(client, model, contents, config=None, max_retries=6):
     delay = 3.0
     transient_indicators = [
@@ -122,13 +150,8 @@ def generate_content_with_retry(client, model, contents, config=None, max_retrie
                     continue
             raise e
 
+
 def synthesize_gemini_voice(client, text: str, voice_name: str, output_wav_path: str):
-    """
-    Synthesizes speech using Gemini Native TTS:
-    1. Tries the official Gemini 3.8 TTS `client.interactions.create` API first (avoids speechConfig 400 error).
-    2. Falls back to `v1beta` `generate_content` across 3.8 / 3.1 / 2.5 TTS models if needed.
-    """
-    # --- METHOD 1: Official Interactions API for Gemini 3.8 Flash TTS ---
     if hasattr(client, "interactions"):
         for tts_model in ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"]:
             try:
@@ -136,15 +159,10 @@ def synthesize_gemini_voice(client, text: str, voice_name: str, output_wav_path:
                     model=tts_model,
                     input=[{
                         "type": "user_input",
-                        "content": [{
-                            "type": "text",
-                            "text": text
-                        }]
+                        "content": [{"type": "text", "text": text}]
                     }],
                     response_format={"type": "audio"},
-                    generation_config={
-                        "speech_config": [{"voice": voice_name}]
-                    }
+                    generation_config={"speech_config": [{"voice": voice_name}]}
                 )
                 audio_data = None
                 if hasattr(interaction, "output_audio") and interaction.output_audio:
@@ -162,7 +180,6 @@ def synthesize_gemini_voice(client, text: str, voice_name: str, output_wav_path:
             except Exception:
                 continue
 
-    # --- METHOD 2: v1beta generate_content API with SpeechConfig ---
     last_error = None
     for tts_model in ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"]:
         try:
@@ -190,11 +207,34 @@ def synthesize_gemini_voice(client, text: str, voice_name: str, output_wav_path:
             last_error = err
             continue
 
-    raise RuntimeError(f"Gemini TTS synthesis failed across all endpoints. Last error: {last_error}")
+    raise RuntimeError(f"Gemini TTS synthesis failed. Last error: {last_error}")
+
 
 async def synthesize_edge_voice(text: str, voice: str, output_path: str):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_path)
+
+
+def synthesize_any_voice(client, text: str, voice_info: dict, base_filename: str) -> str:
+    """Synthesizes speech using selected engine, trims dead silence at edges, and returns clean WAV path."""
+    raw_path = f"{base_filename}_raw.wav" if voice_info["engine"] == "gemini" else f"{base_filename}_raw.mp3"
+    trimmed_wav = f"{base_filename}_clean.wav"
+
+    if voice_info["engine"] == "gemini":
+        synthesize_gemini_voice(client, text, voice_info["code"], raw_path)
+    else:
+        asyncio.run(synthesize_edge_voice(text, voice_info["code"], raw_path))
+
+    # Strip leading/trailing silence so audio starts on the exact frame without lag
+    subprocess.run([
+        "ffmpeg", "-y", "-i", raw_path,
+        "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,areverse",
+        "-ar", "24000", "-ac", "1",
+        trimmed_wav
+    ], capture_output=True, check=True)
+
+    return trimmed_wav
+
 
 uploaded_file = st.file_uploader("Upload MP4 Video File", type=["mp4"])
 
@@ -208,7 +248,7 @@ if uploaded_file is not None:
 
     st.video(temp_video)
 
-    if st.button("🚀 Analyze Video & Overlay Viral Hook"):
+    if st.button("🚀 Analyze Video & Overlay Frame-Synced Voiceover", type="primary", use_container_width=True):
         api_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
         if not api_key:
             st.error("Please enter your Gemini API Key in the sidebar.")
@@ -218,20 +258,19 @@ if uploaded_file is not None:
         with open(temp_video, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # CRITICAL FIX: Force v1beta so `speechConfig` is recognized by the API
         client = genai.Client(
             api_key=api_key,
             http_options={"api_version": "v1beta"}
         )
 
-        with st.status("Analyzing Video & Building Audio Overlay...", expanded=True) as status:
+        with st.status("Analyzing Video Timestamps & Building Synced Audio...", expanded=True) as status:
 
             # 1. Video Duration
             video_duration = get_file_duration(temp_video)
             st.write(f"⏱️ Video Duration: **{video_duration:.2f} seconds**")
 
             # 2. Upload Video to Gemini File API
-            st.write("📹 Uploading raw video to Gemini for direct visual understanding...")
+            st.write("📹 Uploading video to Gemini for frame-accurate visual timeline analysis...")
             try:
                 video_file = client.files.upload(file=temp_video)
             except Exception as e:
@@ -246,116 +285,220 @@ if uploaded_file is not None:
                 st.error(f"Gemini failed to process video. File state: {get_file_state_str(video_file)}")
                 st.stop()
 
-            # 3. Multimodal Analysis (Tries 3.8-flash -> 3.6-flash -> 2.5-flash)
-            st.write(f"🤖 Gemini is analyzing video & writing a **{script_style}** script in **{selected_voice_info['lang']}**...")
-            
             target_lang = selected_voice_info["lang"]
             script_type = selected_voice_info["script_type"]
 
-            if script_style == "Viral Explanation Mode (Hook-Scoop-Twist)":
-                style_guide = """
-                CRITICAL STYLE: You MUST use the exact 3-part 'Hook-Scoop-Twist' anatomy.
-                1. The Hook (Contrasting Irony): Present an exaggerated, wholesome description of the subject in the video and immediately set up a surprising or slightly funny situation they've agreed to.
-                2. The Scoop (The "Inside Story" Reveal): Dive into a juicy background detail told in a casual, gossipy tone.
-                3. The Twist / Punchline: Highlight a quirky silver lining or funny dynamic, delivered with light humor.
-                """
-            else:
-                style_guide = f"Style: {script_style}."
+            # =========================================================================
+            # MODE A: TIMESTAMPED BEAT-BY-BEAT SYNC (LOCKS VOICE TO EXACT VIDEO MOMENTS)
+            # =========================================================================
+            if "Timestamped Beat Sync" in sync_mode:
+                num_beats = max(2, min(5, int(round(video_duration / 4.0))))
+                st.write(f"🤖 Gemini is mapping **{num_beats} visual time-segments** in **{target_lang}** so voice never outruns the video...")
 
-            prompt = f"""
-            You are a master viral video content creator.
-            Watch the visuals, movement, actions, and overall context of this attached video file.
-            Write a high-converting, extremely interesting opening hook and creative story/script based directly on what is visually happening in the video.
-
-            {style_guide}
-
-            CRITICAL LANGUAGE & CONSTRAINTS:
-            1. LANGUAGE REQUIREMENT: You MUST write the ENTIRE script natively in {target_lang} using standard {script_type}. YOU MUST RESPOND UNMISTAKABLY IN LANGUAGE <{target_lang}>.
-            2. Total script length MUST be spoken aloud in EXACTLY {int(video_duration)} seconds or less. Target roughly {int(video_duration * 2.2)} spoken words in {target_lang}.
-            3. The first sentence MUST be an immediate, viral hook to catch viewer attention in the first 3 seconds.
-            4. Output ONLY the plain text script to be spoken in {target_lang}. No markdown, no translation notes, no scene instructions, no labels.
-            """
-
-            response = None
-            last_script_err = None
-            for vision_model in ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"]:
-                try:
-                    response = generate_content_with_retry(
-                        client,
-                        model=vision_model,
-                        contents=[video_file, prompt]
-                    )
-                    break
-                except Exception as err:
-                    last_script_err = err
-                    continue
-
-            if response is None:
-                st.error(f"Error generating script: {last_script_err}")
-                st.stop()
-
-            # Clean up uploaded video from Gemini server
-            try:
-                client.files.delete(name=video_file.name)
-            except Exception:
-                pass
-
-            creative_script = response.text.strip() if response.text else ""
-            if not creative_script:
-                st.error("Generated script was empty. Please try again.")
-                st.stop()
-
-            st.markdown(f"**Generated Script ({target_lang}):**\n\n{creative_script}")
-
-            # 4. Clean Audio Voice Synthesis Path
-            if selected_voice_info["engine"] == "gemini":
-                script_audio = "generated_voice.wav"
-                st.write(f"🎙️ Generating native AI dub using Gemini (**{selected_voice_info['code']}**) voice...")
-                try:
-                    synthesize_gemini_voice(
-                        client=client,
-                        text=creative_script,
-                        voice_name=selected_voice_info["code"],
-                        output_wav_path=script_audio
-                    )
-                except Exception as err:
-                    st.error(f"Gemini Audio Generation Error: {err}")
-                    st.stop()
-            else:
-                script_audio = "generated_voice.mp3"
-                st.write(f"🎙️ Converting script to synthetic voiceover using Edge-TTS (**{selected_voice_info['code']}**)...")
-                asyncio.run(synthesize_edge_voice(creative_script, selected_voice_info["code"], script_audio))
-
-            # 5. Fit Audio Duration via FFmpeg ATempo (Respecting User Speed Multiplier)
-            audio_duration = get_file_duration(script_audio)
-            needed_tempo = audio_duration / video_duration
-            
-            final_tempo = max(needed_tempo, voice_speed)
-            final_tempo = max(0.5, min(final_tempo, 2.0))
-
-            subprocess.run([
-                "ffmpeg", "-y", "-i", script_audio,
-                "-filter:a", f"atempo={final_tempo}",
-                "-ar", "24000", "-ac", "1",
-                fitted_audio
-            ], capture_output=True, check=True)
-
-            # 6. Mux Final Audio/Video (100% replaces original video sound with AI voice)
-            st.write("🎬 Muxing script audio into video via FFmpeg (original video audio muted)...")
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", temp_video,
-                "-i", fitted_audio,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-shortest",
-                output_video
-            ], check=True)
-
-            status.update(label="✨ Video Hook & Script Successfully Overlaid!", state="complete", expanded=False)
-
-        st.subheader("🔥 Final Video Output")
-        st.video(output_video)
+                prompt = f"""
+                You are an expert viral video commentator synchronizing a voiceover to a {video_duration:.1f}-second video.
+                Watch the exact visual timeline of this video and divide it into {num_beats} sequential time segments covering 0.0 to {video_duration:.1f} seconds.
                 
+                Style: {script_style}
+                Language Requirement: Write EVERY spoken line natively in {target_lang} using {script_type}.
+
+                CRITICAL SYNC RULES:
+                1. Each segment's spoken text MUST describe ONLY what is happening on screen during that specific `start_sec` to `end_sec` window! Do NOT spoil future actions early!
+                2. Keep each segment's text concise: strictly ~2.2 words per second of that segment's duration so the voice sounds natural and un-rushed.
+                3. Output ONLY valid JSON in this exact format:
+                [
+                  {{
+                    "start_sec": 0.0,
+                    "end_sec": {round(video_duration / num_beats, 1)},
+                    "visual_action": "What happens on screen right now",
+                    "spoken_text": "Spoken line in {target_lang}"
+                  }}
+                ]
+                """
+
+                response = None
+                last_script_err = None
+                for vision_model in ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"]:
+                    try:
+                        response = generate_content_with_retry(
+                            client,
+                            model=vision_model,
+                            contents=[video_file, prompt],
+                            config=types.GenerateContentConfig(response_mime_type="application/json")
+                        )
+                        break
+                    except Exception as err:
+                        last_script_err = err
+                        continue
+
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
+
+                if response is None or not response.text:
+                    st.error(f"Error generating timestamped script: {last_script_err}")
+                    st.stop()
+
+                raw_json = response.text.strip()
+                if raw_json.startswith("```"):
+                    raw_json = raw_json.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+                beats = json.loads(raw_json)
+                st.markdown("### 🕒 Frame-Synced Script Timeline")
+
+                beat_files = []
+                filter_parts = []
+                mix_inputs = []
+
+                for idx, beat in enumerate(beats):
+                    start_s = max(0.0, float(beat.get("start_sec", 0.0)))
+                    end_s = min(video_duration, float(beat.get("end_sec", video_duration)))
+                    slot_duration = max(1.0, end_s - start_s)
+                    text_line = str(beat.get("spoken_text", "")).strip()
+                    visual_note = str(beat.get("visual_action", "")).strip()
+
+                    if not text_line:
+                        continue
+
+                    st.markdown(f"- **`{start_s:.1f}s - {end_s:.1f}s`** ({visual_note}): {text_line}")
+
+                    # Synthesize this beat
+                    clean_beat_wav = synthesize_any_voice(client, text_line, selected_voice_info, f"beat_{idx}")
+                    raw_beat_dur = get_file_duration(clean_beat_wav)
+
+                    # Fit beat cleanly inside its exact time window so it never bleeds into the next scene
+                    # If the audio is longer than the slot, speed it up to fit; if slightly shorter, keep natural 1.0x-1.08x pace
+                    if raw_beat_dur > slot_duration * 0.96:
+                        beat_tempo = raw_beat_dur / (slot_duration * 0.94)
+                    else:
+                        # Subtle natural energy without rushing ahead of the scene
+                        beat_tempo = max(0.95, min(1.08, raw_beat_dur / (slot_duration * 0.85)))
+
+                    atempo_str = build_atempo_filter(beat_tempo)
+                    fitted_beat_wav = f"beat_{idx}_fitted.wav"
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", clean_beat_wav,
+                        "-filter:a", atempo_str,
+                        "-ar", "24000", "-ac", "1",
+                        fitted_beat_wav
+                    ], capture_output=True, check=True)
+
+                    delay_ms = int(start_s * 1000)
+                    beat_files.extend(["-i", fitted_beat_wav])
+                    filter_parts.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[a{idx}]")
+                    mix_inputs.append(f"[a{idx}]")
+
+                # Combine all timestamp-locked beats onto a single master audio track of exact video_duration
+                amix_Script = (
+                    ";".join(filter_parts)
+                    + f";{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:duration=longest:dropout_transition=0:normalize=0,apad,atrim=0:{video_duration}[aout]"
+                )
+                subprocess.run(
+                    ["ffmpeg", "-y"] + beat_files + [
+                        "-filter_complex", amix_Script,
+                        "-map", "[aout]",
+                        "-ar", "24000", "-ac", "1",
+                        fitted_audio
+                    ],
+                    capture_output=True, check=True
+                )
+
+            # =========================================================================
+            # MODE B: EXACT CONTINUOUS DURATION LOCK (1 SCRIPT PERFECTLY STRETCHED)
+            # =========================================================================
+            else:
+                st.write(f"🤖 Gemini is writing a continuous **{script_style}** script calibrated for **{video_duration:.1f}s**...")
+                target_words = max(8, int(video_duration * 2.4))
+
+                prompt = f"""
+                You are a master viral video content creator.
+                Watch the visuals, movement, actions, and chronological order of events in this {video_duration:.1f}-second video.
+                Write a continuous voiceover script in {target_lang} ({script_type}) that follows the exact chronological order of the video from start to finish.
+                Style: {script_style}.
+                
+                CRITICAL PACING CONSTRAINT:
+                - Write approximately {target_words} words so that when spoken at a natural 1.0x speed, it lasts {video_duration:.1f} seconds.
+                - Output ONLY the plain spoken script in {target_lang}. No markdown, no labels.
+                """
+
+                response = None
+                for vision_model in ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"]:
+                    try:
+                        response = generate_content_with_retry(client, model=vision_model, contents=[video_file, prompt])
+                        break
+                    except Exception:
+                        continue
+
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass
+
+                creative_script = response.text.strip() if (response and response.text) else ""
+                if not creative_script:
+                    st.error("Generated script was empty. Please try again.")
+                    st.stop()
+
+                st.markdown(f"**Generated Script ({target_lang}):**\n\n{creative_script}")
+
+                # Synthesize single continuous voiceover and trim dead silence at edges
+                clean_wav = synthesize_any_voice(client, creative_script, selected_voice_info, "generated_voice")
+                audio_duration = get_file_duration(clean_wav)
+
+                # Calculate exact ratio so audio finishes at the exact end of the video
+                exact_tempo = audio_duration / (video_duration * 0.97)
+                st.write(f"🎙️ Raw Voice Duration: **{audio_duration:.2f}s** ➔ Sync Ratio: **{exact_tempo:.2f}x**")
+
+                atempo_chain = build_atempo_filter(exact_tempo)
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", clean_wav,
+                    "-filter:a", f"{atempo_chain},apad,atrim=0:{video_duration}",
+                    "-ar", "24000", "-ac", "1",
+                    fitted_audio
+                ], capture_output=True, check=True)
+
+            # 6. Final Mux (Never cuts video short, mutes original audio 100%)
+            st.write("🎬 Locking synced voiceover track to video via FFmpeg...")
+            if auto_adjust_video_speed:
+                final_audio_dur = get_file_duration(fitted_audio)
+                pts_ratio = final_audio_dur / video_duration
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", temp_video,
+                    "-i", fitted_audio,
+                    "-filter:v", f"setpts={pts_ratio:.4f}*PTS",
+                    "-c:v", "libx264", "-preset", "fast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-t", str(final_audio_dur),
+                    output_video
+                ], check=True)
+            else:
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", temp_video,
+                    "-i", fitted_audio,
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-t", str(video_duration),
+                    output_video
+                ], check=True)
+
+            status.update(label="✨ Video & Voiceover Perfectly Synced!", state="complete", expanded=False)
+
+        st.subheader("🔥 Final Frame-Synced Video Output")
+        st.video(output_video)
+        with open(output_video, "rb") as vf:
+            st.download_button(
+                label="📥 Download Synced Video (MP4)",
+                data=vf,
+                file_name="synced_viral_short.mp4",
+                mime="video/mp4",
+                use_container_width=True
+            )
+            
+               
