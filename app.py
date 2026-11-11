@@ -65,6 +65,49 @@ SCRIPT_STYLES = {
 }
 
 VOICE_OPTIONS = {
+    # --- HINDI ---
+    "Hindi Male - Madhur (Edge-TTS)": {
+        "edge": "hi-IN-MadhurNeural",
+        "gemini": "Puck",
+        "gtts_lang": "hi",
+        "gtts_tld": "co.in"
+    },
+    "Hindi Female - Swara (Edge-TTS)": {
+        "edge": "hi-IN-SwaraNeural",
+        "gemini": "Aoede",
+        "gtts_lang": "hi",
+        "gtts_tld": "co.in"
+    },
+    
+    # --- MARATHI ---
+    "Marathi Male - Manohar (Edge-TTS)": {
+        "edge": "mr-IN-ManoharNeural",
+        "gemini": "Charon",
+        "gtts_lang": "mr",
+        "gtts_tld": "co.in"
+    },
+    "Marathi Female - Aarohi (Edge-TTS)": {
+        "edge": "mr-IN-AarohiNeural",
+        "gemini": "Kore",
+        "gtts_lang": "mr",
+        "gtts_tld": "co.in"
+    },
+
+    # --- ENGLISH (INDIA) ---
+    "Indian English Male - Prabhat (Edge-TTS)": {
+        "edge": "en-IN-PrabhatNeural",
+        "gemini": "Charon",
+        "gtts_lang": "en",
+        "gtts_tld": "co.in"
+    },
+    "Indian English Female - Neerja (Edge-TTS)": {
+        "edge": "en-IN-NeerjaNeural",
+        "gemini": "Kore",
+        "gtts_lang": "en",
+        "gtts_tld": "co.in"
+    },
+
+    # --- GEMINI NATIVE VOICES ---
     "Gemini Native: Charon (Deep, Crisp Male)": {
         "edge": "en-IN-PrabhatNeural",
         "gemini": "Charon",
@@ -93,18 +136,6 @@ VOICE_OPTIONS = {
         "edge": "en-IN-NeerjaNeural",
         "gemini": "Kore",
         "gtts_lang": "en",
-        "gtts_tld": "co.in"
-    },
-    "Edge-TTS: Hindi Male (Madhur)": {
-        "edge": "hi-IN-MadhurNeural",
-        "gemini": "Puck",
-        "gtts_lang": "hi",
-        "gtts_tld": "co.in"
-    },
-    "Edge-TTS: Hindi Female (Swara)": {
-        "edge": "hi-IN-SwaraNeural",
-        "gemini": "Aoede",
-        "gtts_lang": "hi",
         "gtts_tld": "co.in"
     }
 }
@@ -139,8 +170,8 @@ with st.sidebar:
     tts_engine_preference = st.selectbox(
         "⚙️ Primary Voice Engine",
         [
-            "Gemini 2.5 Native TTS First (Charon, Fenrir, Puck, etc.)",
-            "Edge-TTS First (Fastest, No Gemini Quota Used)"
+            "Edge-TTS First (Best for Multilingual Hindi/Marathi/English)",
+            "Gemini Native TTS First (Charon, Fenrir, Puck, etc.)"
         ],
         index=0
     )
@@ -150,7 +181,12 @@ with st.sidebar:
 
     language_instruction = st.selectbox(
         "🌐 Script Output Language",
-        ["Hinglish (Roman Hindi + English Mix - Best for Viral Shorts)", "Pure Hindi (Devanagari)", "English"]
+        [
+            "Hinglish (Roman Hindi + English Mix - Best for Viral Shorts)",
+            "Marathi (मराठी)",
+            "Pure Hindi (Devanagari)",
+            "English"
+        ]
     )
 
 
@@ -170,22 +206,22 @@ def generate_tts_bulletproof(
     voice_cfg: dict,
     output_audio_path: str,
     api_key: str,
-    prefer_gemini: bool = True
+    prefer_gemini: bool = False
 ) -> bool:
     """
     3-Tier TTS Generator:
-    1. Gemini 2.5 Flash TTS (Charon, Fenrir, Puck, etc.)
-    2. Subprocess CLI Edge-TTS
+    1. Optional Gemini Native TTS
+    2. Subprocess CLI Edge-TTS (Supports Hindi, Marathi, English Neural voices)
     3. gTTS + FFmpeg speed boost fallback
     """
     clean_text = clean_script_for_tts(text)
 
-    # --- TIER 1: GEMINI 2.5 NATIVE TTS ---
+    # --- TIER 1: GEMINI NATIVE TTS (If preferred) ---
     if prefer_gemini and USING_NEW_SDK and api_key:
         try:
             client = genai.Client(api_key=api_key.strip())
             tts_resp = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
+                model="gemini-2.5-flash-preview-tts",  # Or updated flagship tts endpoint
                 contents=f"Read this script with high energy and natural pacing: {clean_text}",
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
@@ -328,7 +364,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
     }}
     """
 
-    st.info("📤 Uploading video to Gemini Vision for script generation...")
+    st.info("📤 Uploading video to Gemini Vision (using gemini-3.8-flash) for script generation...")
 
     if USING_NEW_SDK:
         client = genai.Client(api_key=clean_key)
@@ -340,7 +376,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
             raise RuntimeError("Gemini video processing failed.")
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",  # Updated to latest flagship flash model
             contents=[uploaded_file, prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
@@ -354,7 +390,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
         if uploaded_file.state.name == "FAILED":
             raise RuntimeError("Gemini video processing failed.")
 
-        model = genai_legacy.GenerativeModel("gemini-2.5-flash")
+        model = genai_legacy.GenerativeModel("gemini-3.8-flash")
         response = model.generate_content([uploaded_file, prompt])
         raw_text = response.text.strip()
 
@@ -370,7 +406,7 @@ def analyze_video_with_gemini(api_key: str, video_path: str, style_name: str, la
 # 5. MAIN APP UI & EXECUTION FLOW
 # ==========================================
 st.title("🎬 AI Script Makeover & Voiceover Studio")
-st.caption("Transform any video with professional AI voice models (Charon, Fenrir, Puck, Aoede, Kore) and custom viral script styles.")
+st.caption("Powered by Gemini 3.8 Flash with multilingual neural voices (Hindi, Marathi, English).")
 
 uploaded_video = st.file_uploader("Upload Video (MP4, MOV, MKV, WebM)", type=["mp4", "mov", "mkv", "webm"])
 
@@ -395,10 +431,10 @@ if uploaded_video:
             with open(source_video_path, "wb") as f:
                 f.write(uploaded_video.read())
 
-            prefer_gemini_tts = ("Gemini 2.5 Native TTS" in tts_engine_preference)
+            prefer_gemini_tts = ("Gemini Native TTS" in tts_engine_preference)
 
             try:
-                with st.spinner("🧠 Gemini is analyzing your video and crafting the script makeover..."):
+                with st.spinner("🧠 Gemini 3.8 Flash is analyzing your video and crafting the script makeover..."):
                     analysis_result = analyze_video_with_gemini(
                         api_key=gemini_api_key,
                         video_path=source_video_path,
@@ -414,7 +450,7 @@ if uploaded_video:
                 
                 st.subheader(f"📝 Generated Script ({selected_style})")
                 st.info(script_text)
-                st.caption(f"**Visual Summary:** {visual_summary}")
+                st.caption(f"**Visual Scene:** {visual_summary}")
 
                 audio_path = None
                 if "Overlay AI Voiceover" in audio_choice:
@@ -457,4 +493,4 @@ if uploaded_video:
 
             except Exception as e:
                 st.error(f"An error occurred during processing: {e}")
-    
+                
